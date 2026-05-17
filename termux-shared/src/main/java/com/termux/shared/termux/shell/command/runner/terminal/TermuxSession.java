@@ -150,7 +150,7 @@ public class TermuxSession {
 
         Logger.logDebugExtended(LOG_TAG, executionCommand.toString());
         Logger.logVerboseExtended(LOG_TAG, "\"" + executionCommand.getCommandIdAndLabelLogString() + "\" TermuxSession Environment:\n" +
-            Joiner.on("\n").join(environmentArray));
+            Joiner.on("\n").join(ShellEnvironmentUtils.redactSensitiveEnvironmentForLogging(environmentList)));
 
         Logger.logDebug(LOG_TAG, "Running \"" + executionCommand.getCommandIdAndLabelLogString() + "\" TermuxSession");
         TerminalSession terminalSession = new TerminalSession(executionCommand.executable,

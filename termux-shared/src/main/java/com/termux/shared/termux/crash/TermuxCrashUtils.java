@@ -341,12 +341,20 @@ public class TermuxCrashUtils implements CrashHandler.CrashHandlerClient {
 
         // Must ensure result code for PendingIntents and id for notification are unique otherwise will override previous
         int nextNotificationId = TermuxNotificationUtils.getNextNotificationId(termuxPackageContext);
+        /*
+        CDXC:AndroidReleaseSurface 2026-05-17-16:54:
+        Crash report notification intents open fixed in-app report screens and
+        do not need caller mutation. Keep them immutable so Ghostex Android's
+        release notification paths remain compatible with modern Android
+        PendingIntent safety requirements.
+        */
+        int reportPendingIntentFlags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
 
-        PendingIntent contentIntent = PendingIntent.getActivity(termuxPackageContext, nextNotificationId, result.contentIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+        PendingIntent contentIntent = PendingIntent.getActivity(termuxPackageContext, nextNotificationId, result.contentIntent, reportPendingIntentFlags);
 
         PendingIntent deleteIntent = null;
         if (result.deleteIntent != null)
-            deleteIntent = PendingIntent.getBroadcast(termuxPackageContext, nextNotificationId, result.deleteIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+            deleteIntent = PendingIntent.getBroadcast(termuxPackageContext, nextNotificationId, result.deleteIntent, reportPendingIntentFlags);
 
         // Setup the notification channel if not already set up
         setupCrashReportsNotificationChannel(termuxPackageContext);

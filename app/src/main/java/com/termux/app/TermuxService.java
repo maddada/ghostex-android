@@ -19,7 +19,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.termux.R;
-import com.termux.app.event.SystemEventReceiver;
+import com.termux.app.ghostex.GhostexServiceNotificationFormatter;
 import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
 import com.termux.app.terminal.TermuxTerminalSessionServiceClient;
 import com.termux.shared.termux.plugins.TermuxPluginUtils;
@@ -50,7 +50,9 @@ import com.termux.terminal.TerminalSession;
 import com.termux.terminal.TerminalSessionClient;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * A service holding a list of {@link TermuxSession} in {@link TermuxShellManager#mTermuxSessions} and background {@link AppShell}
@@ -119,7 +121,13 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
 
         runStartForeground();
 
-        SystemEventReceiver.registerPackageUpdateEvents(this);
+        /*
+        CDXC:AndroidReleaseSurface 2026-05-17-13:17:
+        Ghostex Android does not integrate Termux plugin packages at runtime.
+        Do not dynamically register package add/remove/replace listeners for
+        stock Termux plugin environment refreshes; remote-session operation is
+        scoped to the selected SSH machine and the Ghostex CLI/ZMX on that Mac.
+        */
     }
 
     @SuppressLint("Wakelock")
@@ -176,8 +184,6 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
             killAllTermuxExecutionCommands();
 
         TermuxShellManager.onAppExit(this);
-
-        SystemEventReceiver.unregisterPackageUpdateEvents(this);
 
         runStopForeground();
     }
@@ -311,17 +317,21 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         Logger.logDebug(LOG_TAG, "Acquiring WakeLocks");
 
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-        mWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, TermuxConstants.TERMUX_APP_NAME.toLowerCase() + ":service-wakelock");
+        /*
+        CDXC:AndroidReleaseSurface 2026-05-17-20:09:
+        The retained foreground service still exposes an explicit Keep awake
+        action, but Ghostex Android should not open Android's broad battery
+        optimization exemption flow from that action. Use locale-stable lock
+        tags and keep the behavior limited to acquiring the requested locks.
+        */
+        String lockTag = TermuxConstants.TERMUX_APP_NAME.toLowerCase(Locale.ROOT);
+        mWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, lockTag + ":service-wakelock");
         mWakeLock.acquire();
 
         // http://tools.android.com/tech-docs/lint-in-studio-2-3#TOC-WifiManager-Leak
         WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-        mWifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, TermuxConstants.TERMUX_APP_NAME.toLowerCase());
+        mWifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, lockTag);
         mWifiLock.acquire();
-
-        if (!PermissionUtils.checkIfBatteryOptimizationsDisabled(this)) {
-            PermissionUtils.requestDisableBatteryOptimizations(this);
-        }
 
         updateNotification();
 
@@ -573,6 +583,13 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     /** Create a {@link TermuxSession}. */
     @Nullable
     public synchronized TermuxSession createTermuxSession(ExecutionCommand executionCommand) {
+        return createTermuxSession(executionCommand, null);
+    }
+
+    /** Create a {@link TermuxSession}. */
+    @Nullable
+    public synchronized TermuxSession createTermuxSession(ExecutionCommand executionCommand,
+                                                          HashMap<String, String> additionalEnvironment) {
         if (executionCommand == null) return null;
 
         Logger.logDebug(LOG_TAG, "Creating \"" + executionCommand.getCommandIdAndLabelLogString() + "\" TermuxSession");
@@ -591,8 +608,15 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         // If the execution command was started for a plugin, only then will the stdout be set
         // Otherwise if command was manually started by the user like by adding a new terminal session,
         // then no need to set stdout
+        /*
+        CDXC:AndroidConnectionSecurity 2026-05-17-10:13:
+        Ghostex Android may need to pass SSHPASS to a remote attach process so
+        saved SSH passwords are not written into command arguments, shell
+        history, logs, or app files. Keep this as an optional environment map so
+        upstream Termux session creation remains unchanged for normal sessions.
+        */
         TermuxSession newTermuxSession = TermuxSession.execute(this, executionCommand, getTermuxTerminalSessionClient(),
-            this, new TermuxShellEnvironment(), null, executionCommand.isPluginExecutionCommand);
+            this, new TermuxShellEnvironment(), additionalEnvironment, executionCommand.isPluginExecutionCommand);
         if (newTermuxSession == null) {
             Logger.logError(LOG_TAG, "Failed to execute new TermuxSession command for:\n" + executionCommand.getCommandIdAndLabelLogString());
             // If the execution command was started for a plugin, then process the error
@@ -782,21 +806,24 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     private Notification buildNotification() {
         Resources res = getResources();
 
+        /*
+        CDXC:AndroidConnectionSecurity 2026-05-17-10:37:
+        Ghostex Android should not ship release builds with mutable notification
+        PendingIntents while the app owns SSH-backed session attach surfaces.
+        These service notification actions do not need caller mutation.
+        */
+        int notificationPendingIntentFlags = PendingIntent.FLAG_IMMUTABLE;
+
         // Set pending intent to be launched when notification is clicked
         Intent notificationIntent = TermuxActivity.newInstance(this);
-        PendingIntent contentIntent = PendingIntent.getActivity(this, 0, notificationIntent, 0);
+        PendingIntent contentIntent = PendingIntent.getActivity(this, 0, notificationIntent, notificationPendingIntentFlags);
 
 
         // Set notification text
         int sessionCount = getTermuxSessionsSize();
         int taskCount = mShellManager.mTermuxTasks.size();
-        String notificationText = sessionCount + " session" + (sessionCount == 1 ? "" : "s");
-        if (taskCount > 0) {
-            notificationText += ", " + taskCount + " task" + (taskCount == 1 ? "" : "s");
-        }
-
         final boolean wakeLockHeld = mWakeLock != null;
-        if (wakeLockHeld) notificationText += " (wake lock held)";
+        String notificationText = GhostexServiceNotificationFormatter.buildText(sessionCount, taskCount, wakeLockHeld);
 
 
         // Set notification priority
@@ -827,7 +854,7 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
 
         // Set Exit button action
         Intent exitIntent = new Intent(this, TermuxService.class).setAction(TERMUX_SERVICE.ACTION_STOP_SERVICE);
-        builder.addAction(android.R.drawable.ic_delete, res.getString(R.string.notification_action_exit), PendingIntent.getService(this, 0, exitIntent, 0));
+        builder.addAction(android.R.drawable.ic_delete, res.getString(R.string.notification_action_exit), PendingIntent.getService(this, 0, exitIntent, notificationPendingIntentFlags));
 
 
         // Set Wakelock button actions
@@ -835,7 +862,7 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         Intent toggleWakeLockIntent = new Intent(this, TermuxService.class).setAction(newWakeAction);
         String actionTitle = res.getString(wakeLockHeld ? R.string.notification_action_wake_unlock : R.string.notification_action_wake_lock);
         int actionIcon = wakeLockHeld ? android.R.drawable.ic_lock_idle_lock : android.R.drawable.ic_lock_lock;
-        builder.addAction(actionIcon, actionTitle, PendingIntent.getService(this, 0, toggleWakeLockIntent, 0));
+        builder.addAction(actionIcon, actionTitle, PendingIntent.getService(this, 0, toggleWakeLockIntent, notificationPendingIntentFlags));
 
 
         return builder.build();

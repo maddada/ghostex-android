@@ -59,13 +59,19 @@ public class TermuxApplication extends Application {
                 return;
             }
 
-            // Setup termux-am-socket server
-            TermuxAmSocketServer.setupTermuxAmSocketServer(context);
+            /*
+            CDXC:AndroidReleaseSurface 2026-05-17-13:15:
+            Ghostex Android should not start Termux's `termux-am` local socket
+            server. The app's automation boundary is SSH to the selected Mac and
+            Ghostex CLI/ZMX on that host; keeping a local Android command bridge
+            active would reintroduce a stock Termux runtime surface.
+            */
+            TermuxAmSocketServer.disableForGhostexAndroid(context);
         } else {
             Logger.logErrorExtended(LOG_TAG, "Termux files directory is not accessible\n" + error);
         }
 
-        // Init TermuxShellEnvironment constants and caches after everything has been setup including termux-am-socket server
+        // Init TermuxShellEnvironment constants and caches after the Ghostex runtime surface has been configured.
         TermuxShellEnvironment.init(this);
 
         if (isTermuxFilesDirectoryAccessible) {

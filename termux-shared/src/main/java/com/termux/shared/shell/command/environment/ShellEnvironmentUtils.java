@@ -42,6 +42,38 @@ public class ShellEnvironmentUtils {
         return environmentList;
     }
 
+    /*
+    CDXC:AndroidConnectionSecurity 2026-05-17-18:31:
+    Ghostex Android passes SSHPASS only as a process environment variable so
+    saved SSH passwords stay out of command text and files. Verbose Termux
+    execution logs must redact secret-like environment values before joining
+    them into log strings, otherwise that safer transport can still leak.
+    */
+    @NonNull
+    public static List<String> redactSensitiveEnvironmentForLogging(@NonNull List<String> environmentList) {
+        ArrayList<String> redacted = new ArrayList<>(environmentList.size());
+        for (String entry : environmentList) {
+            int separatorIndex = entry == null ? -1 : entry.indexOf('=');
+            if (separatorIndex <= 0) {
+                redacted.add(entry);
+                continue;
+            }
+            String name = entry.substring(0, separatorIndex);
+            redacted.add(isSensitiveEnvironmentName(name) ? name + "=<redacted>" : entry);
+        }
+        return redacted;
+    }
+
+    private static boolean isSensitiveEnvironmentName(@NonNull String name) {
+        String normalizedName = name.toUpperCase();
+        return normalizedName.contains("PASS") ||
+            normalizedName.contains("PASSWORD") ||
+            normalizedName.contains("SECRET") ||
+            normalizedName.contains("TOKEN") ||
+            normalizedName.contains("PRIVATE_KEY") ||
+            normalizedName.equals("SSH_AUTH_SOCK");
+    }
+
     /**
      * Convert environment {@link HashMap} to {@link String} where each item equals "key=value".
      *

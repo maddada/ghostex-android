@@ -1,3 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- CDXC:AndroidSidebar 2026-05-17-20:08: XML drawer chrome should use the same neutral macOS sidebar tokens as GhostexPalette instead of hardcoded blue-slate colors, keeping the copied Termux drawer layout small while preserving visual parity with the Mac app. -->
+    <color name="ghostex_sidebar_background">#181818</color>
+    <color name="ghostex_sidebar_foreground">#FAFAFA</color>
+    <color name="ghostex_sidebar_muted">#B5B5B5</color>
+    <color name="ghostex_sidebar_input">#0E0E0E</color>
+    <color name="ghostex_sidebar_button">#262626</color>
+    <color name="ghostex_sidebar_primary">#7DD3FC</color>
 </resources>

@@ -1,5 +1,6 @@
 package com.termux.app;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
@@ -9,7 +10,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
+import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.view.ContextMenu;
@@ -21,13 +24,14 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.EditText;
-import android.widget.ImageButton;
 import android.widget.ListView;
 import android.widget.RelativeLayout;
 import android.widget.Toast;
 
 import com.termux.R;
 import com.termux.app.api.file.FileReceiverActivity;
+import com.termux.app.ghostex.GhostexAndroidController;
+import com.termux.app.ghostex.GhostexBackNavigationPolicy;
 import com.termux.app.terminal.TermuxActivityRootView;
 import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
 import com.termux.app.terminal.io.TermuxTerminalExtraKeys;
@@ -62,6 +66,7 @@ import com.termux.view.TerminalViewClient;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.viewpager.widget.ViewPager;
 
@@ -78,6 +83,9 @@ import java.util.Arrays;
  * about memory leaks.
  */
 public final class TermuxActivity extends AppCompatActivity implements ServiceConnection {
+
+    private static final int REQUEST_POST_NOTIFICATIONS_PERMISSION = 7031;
+    private static final int REQUEST_GHOSTEX_ATTACH_IMAGE = 7032;
 
     /**
      * The connection to the {@link TermuxService}. Requested in {@link #onCreate(Bundle)} with a call to
@@ -138,6 +146,15 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
      */
     TermuxSessionsListViewController mTermuxSessionListViewController;
 
+    /*
+    CDXC:AndroidRemoteSessions 2026-05-17-10:13:
+    Ghostex Android replaces Termux's local session drawer with a remote ZMX
+    session drawer while keeping the terminal view and session process plumbing
+    from upstream Termux. Keep this as a narrow activity integration point so
+    future upstream syncs do not have to reconcile broad activity rewrites.
+    */
+    GhostexAndroidController mGhostexAndroidController;
+
     /**
      * The {@link TermuxActivity} broadcast receiver for various things like terminal style configuration changes.
      */
@@ -193,6 +210,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final String ARG_ACTIVITY_RECREATED = "activity_recreated";
 
     private static final String LOG_TAG = "TermuxActivity";
+
+    private long mLastGhostexBackPressedAtMs;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -250,6 +269,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         setNewSessionButtonView();
 
         setToggleKeyboardView();
+
+        mGhostexAndroidController = new GhostexAndroidController(this);
+        requestNotificationPermissionIfNeeded();
 
         registerForContextMenu(mTerminalView);
 
@@ -319,6 +341,15 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         // notification with the crash details if it did
         TermuxCrashUtils.notifyAppCrashFromCrashLogFile(this, LOG_TAG);
 
+        /*
+        CDXC:AndroidConnectionManagement 2026-05-17-11:17:
+        Returning to Ghostex Android should refresh the last selected SSH
+        machine instead of relying only on cold service binding. The controller
+        throttles this so normal activity resumes do not spam remote SSH.
+        */
+        if (mGhostexAndroidController != null && mTermuxService != null && !mIsOnResumeAfterOnCreate)
+            mGhostexAndroidController.onActivityResumed();
+
         mIsOnResumeAfterOnCreate = false;
     }
 
@@ -358,6 +389,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             mTermuxService = null;
         }
 
+        if (mGhostexAndroidController != null) {
+            mGhostexAndroidController.onDestroy();
+            mGhostexAndroidController = null;
+        }
+
         try {
             unbindService(this);
         } catch (Exception e) {
@@ -389,7 +425,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         mTermuxService = ((TermuxService.LocalBinder) service).service;
 
-        setTermuxSessionsListView();
+        if (mGhostexAndroidController == null)
+            setTermuxSessionsListView();
 
         final Intent intent = getIntent();
         setIntent(null);
@@ -403,7 +440,18 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                         if (intent != null && intent.getExtras() != null) {
                             launchFailsafe = intent.getExtras().getBoolean(TERMUX_ACTIVITY.EXTRA_FAILSAFE_SESSION, false);
                         }
-                        mTermuxTerminalSessionActivityClient.addNewSession(launchFailsafe, null);
+                        /*
+                         * CDXC:AndroidRemoteSessions 2026-05-17-17:05:
+                         * Ghostex Android should not create a local Termux shell
+                         * on startup. The terminal surface is an attach surface
+                         * for remote Ghostex/ZMX sessions, with local terminals
+                         * created only by explicit Ghostex flows such as phone
+                         * setup or remote attach.
+                         */
+                        if (mGhostexAndroidController == null)
+                            mTermuxTerminalSessionActivityClient.addNewSession(launchFailsafe, null);
+                        if (mGhostexAndroidController != null)
+                            mGhostexAndroidController.onTermuxServiceConnected();
                     } catch (WindowManager.BadTokenException e) {
                         // Activity finished - ignore.
                     }
@@ -416,13 +464,15 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             // If termux was started from launcher "New session" shortcut and activity is recreated,
             // then the original intent will be re-delivered, resulting in a new session being re-added
             // each time.
-            if (!mIsActivityRecreated && intent != null && Intent.ACTION_RUN.equals(intent.getAction())) {
+            if (mGhostexAndroidController == null && !mIsActivityRecreated && intent != null && Intent.ACTION_RUN.equals(intent.getAction())) {
                 // Android 7.1 app shortcut from res/xml/shortcuts.xml.
                 boolean isFailSafe = intent.getBooleanExtra(TERMUX_ACTIVITY.EXTRA_FAILSAFE_SESSION, false);
                 mTermuxTerminalSessionActivityClient.addNewSession(isFailSafe, null);
-            } else {
+            } else if (!mTermuxService.isTermuxSessionsEmpty()) {
                 mTermuxTerminalSessionActivityClient.setCurrentSession(mTermuxTerminalSessionActivityClient.getCurrentStoredSessionOrLast());
             }
+            if (mGhostexAndroidController != null)
+                mGhostexAndroidController.onTermuxServiceConnected();
         }
 
         // Update the {@link TerminalSession} and {@link TerminalEmulator} clients.
@@ -564,14 +614,26 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
 
     private void setSettingsButtonView() {
-        ImageButton settingsButton = findViewById(R.id.settings_button);
+        if (isGhostexDrawerLayoutInstalled()) return;
+        View settingsButton = findViewById(R.id.settings_button);
+        if (settingsButton == null) return;
         settingsButton.setOnClickListener(v -> {
             ActivityUtils.startActivity(this, new Intent(this, SettingsActivity.class));
         });
     }
 
     private void setNewSessionButtonView() {
+        /*
+        CDXC:AndroidSidebar 2026-05-17-19:30:
+        The Ghostex drawer reuses upstream button ids for minimal layout churn,
+        but those controls must never point at stock Termux settings or local
+        session creation, even briefly before GhostexAndroidController binds its
+        machine-management actions. Skip upstream drawer binders whenever the
+        Ghostex drawer layout is installed.
+        */
+        if (isGhostexDrawerLayoutInstalled()) return;
         View newSessionButton = findViewById(R.id.new_session_button);
+        if (newSessionButton == null) return;
         newSessionButton.setOnClickListener(v -> mTermuxTerminalSessionActivityClient.addNewSession(false, null));
         newSessionButton.setOnLongClickListener(v -> {
             TextInputDialogUtils.textInput(TermuxActivity.this, R.string.title_create_named_session, null,
@@ -582,25 +644,80 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         });
     }
 
+    private boolean isGhostexDrawerLayoutInstalled() {
+        return findViewById(R.id.ghostex_open_tailscale_button) != null;
+    }
+
     private void setToggleKeyboardView() {
-        findViewById(R.id.toggle_keyboard_button).setOnClickListener(v -> {
+        View sidebarKeyboardButton = findViewById(R.id.toggle_keyboard_button);
+        if (sidebarKeyboardButton != null) sidebarKeyboardButton.setOnClickListener(v -> {
             mTermuxTerminalViewClient.onToggleSoftKeyboardRequest();
             getDrawer().closeDrawers();
         });
 
-        findViewById(R.id.toggle_keyboard_button).setOnLongClickListener(v -> {
+        if (sidebarKeyboardButton != null) sidebarKeyboardButton.setOnLongClickListener(v -> {
             toggleTerminalToolbar();
             return true;
         });
+
+        View floatingKeyboardButton = findViewById(R.id.ghostex_keyboard_fab);
+        if (floatingKeyboardButton != null) floatingKeyboardButton.setOnClickListener(v -> {
+            mTermuxTerminalViewClient.onToggleSoftKeyboardRequest();
+        });
+
+        if (floatingKeyboardButton != null) floatingKeyboardButton.setOnLongClickListener(v -> {
+            toggleTerminalToolbar();
+            return true;
+        });
+
+        View floatingImageButton = findViewById(R.id.ghostex_image_attach_fab);
+        if (floatingImageButton != null) floatingImageButton.setOnClickListener(v -> openGhostexImagePicker());
+    }
+
+    private void openGhostexImagePicker() {
+        /*
+        CDXC:AndroidImageAttach 2026-05-18-01:39:
+        Ghostex Android needs a floating image attach control beside the
+        keyboard button. Use Android's document picker so selected images can be
+        streamed from scoped storage into the SSH upload path without requesting
+        broad storage access.
+        */
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivityForResult(intent, REQUEST_GHOSTEX_ATTACH_IMAGE);
+        } catch (ActivityNotFoundException e) {
+            showToast("No image picker available.", true);
+        }
     }
 
 
 
 
 
-    @SuppressLint("RtlHardcoded")
+    @SuppressLint({"RtlHardcoded", "MissingSuperCall"})
     @Override
     public void onBackPressed() {
+        if (isGhostexDrawerLayoutInstalled()) {
+            long nowMs = System.currentTimeMillis();
+            if (GhostexBackNavigationPolicy.shouldExit(mLastGhostexBackPressedAtMs, nowMs)) {
+                finishActivityIfNotFinishing();
+                return;
+            }
+            /*
+            CDXC:AndroidNavigation 2026-05-18-01:27:
+            Ghostex Android's primary navigation lives in the remote-session
+            sidebar, and phones make left-edge drawer swipes unreliable. Open
+            the sidebar on the first back gesture, then require a second back
+            within five seconds to exit the app.
+            */
+            mLastGhostexBackPressedAtMs = nowMs;
+            getDrawer().openDrawer(Gravity.LEFT);
+            return;
+        }
+
         if (getDrawer().isDrawerOpen(Gravity.LEFT)) {
             getDrawer().closeDrawers();
         } else {
@@ -632,6 +749,27 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (currentSession == null) return;
 
         boolean autoFillEnabled = mTerminalView.isAutoFillEnabled();
+
+        /*
+         * CDXC:AndroidRemoteSessions 2026-05-17-13:11:
+         * Ghostex Android abstracts away local Termux terminal management. In
+         * Ghostex mode, terminal long-press should keep text/URL utilities but
+         * not expose stock Termux Style, Help, Settings, Report Issue, or local
+         * process-kill actions; remote session lifecycle belongs in the Ghostex
+         * drawer context menus.
+         */
+        if (mGhostexAndroidController != null) {
+            menu.add(Menu.NONE, CONTEXT_MENU_SELECT_URL_ID, Menu.NONE, R.string.action_select_url);
+            menu.add(Menu.NONE, CONTEXT_MENU_SHARE_TRANSCRIPT_ID, Menu.NONE, R.string.action_share_transcript);
+            if (!DataUtils.isNullOrEmpty(mTerminalView.getStoredSelectedText()))
+                menu.add(Menu.NONE, CONTEXT_MENU_SHARE_SELECTED_TEXT, Menu.NONE, R.string.action_share_selected_text);
+            if (autoFillEnabled)
+                menu.add(Menu.NONE, CONTEXT_MENU_AUTOFILL_USERNAME, Menu.NONE, R.string.action_autofill_username);
+            if (autoFillEnabled)
+                menu.add(Menu.NONE, CONTEXT_MENU_AUTOFILL_PASSWORD, Menu.NONE, R.string.action_autofill_password);
+            menu.add(Menu.NONE, CONTEXT_MENU_TOGGLE_KEEP_SCREEN_ON, Menu.NONE, R.string.action_toggle_keep_screen_on).setCheckable(true).setChecked(mPreferences.shouldKeepScreenOn());
+            return;
+        }
 
         menu.add(Menu.NONE, CONTEXT_MENU_SELECT_URL_ID, Menu.NONE, R.string.action_select_url);
         menu.add(Menu.NONE, CONTEXT_MENU_SHARE_TRANSCRIPT_ID, Menu.NONE, R.string.action_share_transcript);
@@ -795,6 +933,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         Logger.logVerbose(LOG_TAG, "onActivityResult: requestCode: " + requestCode + ", resultCode: "  + resultCode + ", data: "  + IntentUtils.getIntentString(data));
         if (requestCode == PermissionUtils.REQUEST_GRANT_STORAGE_PERMISSION) {
             requestStoragePermission(true);
+        } else if (requestCode == REQUEST_GHOSTEX_ATTACH_IMAGE && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            if (mGhostexAndroidController != null) {
+                mGhostexAndroidController.attachImageToCurrentTerminal(data.getData());
+            }
         }
     }
 
@@ -804,7 +946,32 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         Logger.logVerbose(LOG_TAG, "onRequestPermissionsResult: requestCode: " + requestCode + ", permissions: "  + Arrays.toString(permissions) + ", grantResults: "  + Arrays.toString(grantResults));
         if (requestCode == PermissionUtils.REQUEST_GRANT_STORAGE_PERMISSION) {
             requestStoragePermission(true);
+        } else if (requestCode == REQUEST_POST_NOTIFICATIONS_PERMISSION) {
+            /*
+            CDXC:AndroidReleaseSurface 2026-05-17-17:00:
+            Target API 35 release builds require the Android 13 notification
+            runtime permission for a visible foreground-service notification.
+            Ghostex still works if the user declines, but explain the loss of
+            connection visibility instead of silently hiding the remote-session
+            service state.
+            */
+            boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            if (!granted) {
+                Logger.showToast(this, getString(R.string.message_notification_permission_not_granted), true);
+            }
         }
+    }
+
+    private void requestNotificationPermissionIfNeeded() {
+        /*
+        CDXC:AndroidReleaseSurface 2026-05-17-17:00:
+        Ghostex Android targets API 35 for release. Request notification access
+        while the launcher activity is foregrounded so the TermuxService
+        foreground notification remains visible on Android 13+.
+        */
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return;
+        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_POST_NOTIFICATIONS_PERMISSION);
     }
 
 
@@ -856,7 +1023,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
 
     public void termuxSessionListNotifyUpdated() {
-        mTermuxSessionListViewController.notifyDataSetChanged();
+        if (mTermuxSessionListViewController != null)
+            mTermuxSessionListViewController.notifyDataSetChanged();
+        if (mGhostexAndroidController != null)
+            mGhostexAndroidController.notifyTermuxSessionsUpdated();
     }
 
     public boolean isVisible() {
@@ -869,6 +1039,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     public boolean isActivityRecreated() {
         return mIsActivityRecreated;
+    }
+
+    public boolean isGhostexAndroidMode() {
+        return mGhostexAndroidController != null;
     }
 
 
@@ -911,6 +1085,13 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     public static void updateTermuxActivityStyling(Context context, boolean recreateActivity) {
         // Make sure that terminal styling is always applied.
         Intent stylingIntent = new Intent(TERMUX_ACTIVITY.ACTION_RELOAD_STYLE);
+        /*
+        CDXC:AndroidReleaseSurface 2026-05-17-20:01:
+        The style-reload broadcast targets the activity's non-exported internal
+        receiver. Package-scope the intent so modern Android treats it as an
+        explicit in-app broadcast instead of an unsafe implicit launch.
+        */
+        stylingIntent.setPackage(context.getPackageName());
         stylingIntent.putExtra(TERMUX_ACTIVITY.EXTRA_RECREATE_ACTIVITY, recreateActivity);
         context.sendBroadcast(stylingIntent);
     }
@@ -921,7 +1102,15 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         intentFilter.addAction(TERMUX_ACTIVITY.ACTION_RELOAD_STYLE);
         intentFilter.addAction(TERMUX_ACTIVITY.ACTION_REQUEST_PERMISSIONS);
 
-        registerReceiver(mTermuxActivityBroadcastReceiver, intentFilter);
+        /*
+        CDXC:AndroidReleaseSurface 2026-05-17-19:58:
+        Target API 35 lint requires an explicit exported state for dynamic
+        non-system receivers. These app-private activity actions are not a
+        Ghostex extension API, so register the receiver as not exported instead
+        of keeping the older platform overload.
+        */
+        ContextCompat.registerReceiver(this, mTermuxActivityBroadcastReceiver, intentFilter,
+            ContextCompat.RECEIVER_NOT_EXPORTED);
     }
 
     private void unregisterTermuxActivityBroadcastReceiver() {

@@ -8,45 +8,55 @@
         If package name in AndroidManifest is changed from "com.termux", then targetClass will
         need to be manually patched since dot (.) prefix does not work to automatically prefix the
         package name.
+
+        CDXC:AndroidRemoteSessions 2026-05-17-10:43:
+        Ghostex Android abstracts away local Termux terminal management. Disable
+        launcher shortcuts that open stock Termux local-session flows so the
+        release launcher surface only enters the Ghostex reconnect experience.
+
+        CDXC:AndroidSideBySideInstall 2026-05-17-23:39:
+        Shortcut targetPackage is static XML and must follow Ghostex Android's
+        side-by-side runtime package id, while targetClass stays in the
+        upstream Java namespace for easier Termux synchronization.
     -->
 
     <shortcut
         android:shortcutId="new_session"
-        android:enabled="true"
+        android:enabled="false"
         android:icon="@drawable/ic_new_session"
         android:shortcutShortLabel="@string/action_new_session"
         tools:targetApi="n_mr1">
         <intent
             android:action="android.intent.action.RUN"
-            android:targetPackage="com.termux"
+            android:targetPackage="com.ghostx"
             android:targetClass="com.termux.app.TermuxActivity"
             android:name="android.shortcut.conversation"/>
     </shortcut>
 
     <shortcut
         android:shortcutId="new_failsafe_session"
-        android:enabled="true"
+        android:enabled="false"
         android:icon="@drawable/ic_new_session"
         android:shortcutShortLabel="@string/action_new_session_failsafe"
         tools:targetApi="n_mr1">
         <intent
             android:action="android.intent.action.RUN"
-            android:targetPackage="com.termux"
+            android:targetPackage="com.ghostx"
             android:targetClass="com.termux.app.TermuxActivity"
             android:name="android.shortcut.conversation">
-            <extra android:name="com.termux.app.failsafe_session" android:value="true"/>
+            <extra android:name="com.ghostx.app.failsafe_session" android:value="true"/>
         </intent>
     </shortcut>
 
     <shortcut
         android:shortcutId="settings"
-        android:enabled="true"
+        android:enabled="false"
         android:icon="@drawable/ic_settings"
         android:shortcutShortLabel="@string/action_open_settings"
         tools:targetApi="n_mr1">
         <intent
             android:action="android.intent.action.VIEW"
-            android:targetPackage="com.termux"
+            android:targetPackage="com.ghostx"
             android:targetClass="com.termux.app.activities.SettingsActivity"
             android:name="android.shortcut.conversation"/>
     </shortcut>

@@ -23,27 +23,72 @@
             android:layout_above="@+id/terminal_toolbar_view_pager"
             android:layout_height="match_parent">
 
-            <com.termux.view.TerminalView
-                android:id="@+id/terminal_view"
+            <FrameLayout
+                android:id="@+id/ghostex_terminal_surface"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:defaultFocusHighlightEnabled="false"
-                android:focusableInTouchMode="true"
-                android:scrollbarThumbVertical="@drawable/terminal_scroll_shape"
-                android:scrollbars="vertical"
-                tools:ignore="UnusedAttribute" />
+                android:layout_height="match_parent">
+
+                <com.termux.view.TerminalView
+                    android:id="@+id/terminal_view"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:defaultFocusHighlightEnabled="false"
+                    android:focusableInTouchMode="true"
+                    android:scrollbarThumbVertical="@drawable/terminal_scroll_shape"
+                    android:scrollbars="vertical"
+                    tools:ignore="UnusedAttribute" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/ghostex_image_attach_fab"
+                    android:layout_width="45dp"
+                    android:layout_height="45dp"
+                    android:layout_gravity="bottom|end"
+                    android:layout_marginEnd="75dp"
+                    android:layout_marginBottom="18dp"
+                    android:alpha="0.10"
+                    android:background="@drawable/ghostex_fab_background"
+                    android:contentDescription="@string/action_attach_image"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:text="@string/ghostex_image_attach_fab_text"
+                    android:textAllCaps="false"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    app:backgroundTint="@null" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/ghostex_keyboard_fab"
+                    android:layout_width="45dp"
+                    android:layout_height="45dp"
+                    android:layout_gravity="bottom|end"
+                    android:layout_marginEnd="18dp"
+                    android:layout_marginBottom="18dp"
+                    android:alpha="0.10"
+                    android:background="@drawable/ghostex_fab_background"
+                    android:contentDescription="@string/action_toggle_soft_keyboard"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:text="@string/ghostex_keyboard_fab_text"
+                    android:textAllCaps="false"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    app:backgroundTint="@null" />
+            </FrameLayout>
+
+            <include layout="@layout/view_ghostex_drawer" />
 
             <LinearLayout
-                android:id="@+id/left_drawer"
+                android:id="@+id/termux_upstream_drawer_template"
                 android:layout_width="240dp"
                 android:layout_height="match_parent"
                 android:layout_gravity="start"
+                android:background="?attr/termuxActivityDrawerBackground"
                 android:choiceMode="singleChoice"
+                android:descendantFocusability="blocksDescendants"
                 android:divider="@android:color/transparent"
                 android:dividerHeight="0dp"
-                android:descendantFocusability="blocksDescendants"
                 android:orientation="vertical"
-                android:background="?attr/termuxActivityDrawerBackground">
+                android:visibility="gone">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -60,10 +105,9 @@
                 </LinearLayout>
 
                 <ListView
-                    android:id="@+id/terminal_sessions_list"
-                    android:layout_width="match_parent"
-                    android:layout_height="0dp"
-                    android:layout_gravity="top"
+                        android:layout_width="match_parent"
+                        android:layout_height="0dp"
+                        android:layout_gravity="top"
                     android:layout_weight="1"
                     android:choiceMode="singleChoice"
                     android:longClickable="true" />
@@ -83,7 +127,6 @@
                         android:text="@string/action_toggle_soft_keyboard" />
 
                     <com.google.android.material.button.MaterialButton
-                        android:id="@+id/new_session_button"
                         style="?android:attr/buttonBarButtonStyle"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"

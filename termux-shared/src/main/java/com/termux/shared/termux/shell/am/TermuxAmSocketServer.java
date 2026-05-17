@@ -96,6 +96,20 @@ public class TermuxAmSocketServer {
         TermuxAppShellEnvironment.updateTermuxAppAMSocketServerEnabled(context);
     }
 
+    public static synchronized void disableForGhostexAndroid(@NonNull Context context) {
+        /*
+        CDXC:AndroidReleaseSurface 2026-05-17-13:15:
+        Ghostex Android is a remote SSH/ZMX client and does not expose Termux's
+        `termux-am` automation bridge. Stop the local socket server and export
+        an explicit disabled state so phone setup and attach shells do not
+        advertise an out-of-scope local automation surface.
+        */
+        Logger.logDebug(LOG_TAG, "Not starting " + TITLE + " socket server for Ghostex Android");
+        stop();
+        TERMUX_APP_AM_SOCKET_SERVER_ENABLED = false;
+        TermuxAppShellEnvironment.updateTermuxAppAMSocketServerEnabled(context);
+    }
+
     /**
      * Create the {@link AmSocketServer} {@link LocalServerSocket} and start listening for new {@link LocalClientSocket}.
      */

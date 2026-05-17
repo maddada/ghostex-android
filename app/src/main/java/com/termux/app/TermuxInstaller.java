@@ -107,6 +107,11 @@ final class TermuxInstaller {
             if (TermuxFileUtils.isTermuxPrefixDirectoryEmpty()) {
                 Logger.logInfo(LOG_TAG, "The termux prefix directory \"" + TERMUX_PREFIX_DIR_PATH + "\" exists but is empty or only contains specific unimportant files.");
             } else {
+                try {
+                    repairBootstrapExecutablePermissions(TERMUX_PREFIX_DIR);
+                } catch (Exception e) {
+                    Logger.logStackTraceWithMessage(LOG_TAG, "Failed to repair bootstrap executable permissions for existing prefix.", e);
+                }
                 whenDone.run();
                 return;
             }
@@ -209,6 +214,7 @@ final class TermuxInstaller {
                     for (Pair<String, String> symlink : symlinks) {
                         Os.symlink(symlink.first, symlink.second);
                     }
+                    repairBootstrapExecutablePermissions(TERMUX_STAGING_PREFIX_DIR);
 
                     Logger.logInfo(LOG_TAG, "Moving termux prefix staging to prefix directory.");
 
@@ -237,6 +243,35 @@ final class TermuxInstaller {
                 }
             }
         }.start();
+    }
+
+    private static void repairBootstrapExecutablePermissions(File prefixDir) throws Exception {
+        /*
+        CDXC:AndroidSideBySideInstall 2026-05-17-23:54:
+        Side-by-side Ghostex builds generate patched bootstrap archives during
+        Gradle packaging. Standard ZIP rewriting can drop Unix mode metadata,
+        so repair the executable command surface after extraction and on later
+        startup instead of leaving users with `pkg: Permission denied`.
+        */
+        repairBootstrapExecutablePermissions(prefixDir, prefixDir);
+    }
+
+    private static void repairBootstrapExecutablePermissions(File prefixDir, File file) throws Exception {
+        if (file == null || !file.exists()) return;
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children == null) return;
+            for (File child : children) {
+                repairBootstrapExecutablePermissions(prefixDir, child);
+            }
+            return;
+        }
+        String relativePath = prefixDir.toURI().relativize(file.toURI()).getPath();
+        if (relativePath.startsWith("bin/") || relativePath.startsWith("libexec/") ||
+            relativePath.startsWith("lib/apt/apt-helper") || relativePath.startsWith("lib/apt/methods/")) {
+            //noinspection OctalInteger
+            Os.chmod(file.getAbsolutePath(), 0700);
+        }
     }
 
     public static void showBootstrapErrorDialog(Activity activity, Runnable whenDone, String message) {

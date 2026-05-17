@@ -123,7 +123,7 @@ public final class AppShell {
         Logger.logDebugExtended(LOG_TAG, ExecutionCommand.getExecutionInputLogString(executionCommand,
             true, Logger.shouldEnableLoggingForCustomLogLevel(executionCommand.backgroundCustomLogLevel)));
         Logger.logVerboseExtended(LOG_TAG, "\"" + executionCommand.getCommandIdAndLabelLogString() + "\" AppShell Environment:\n" +
-            Joiner.on("\n").join(environmentArray));
+            Joiner.on("\n").join(ShellEnvironmentUtils.redactSensitiveEnvironmentForLogging(environmentList)));
 
         // Exec the process
         final Process process;

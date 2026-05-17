@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <!-- CDXC:AndroidSidebar 2026-05-18-00:24: The always-visible keyboard toggle should recede behind terminal content: make it a round gray affordance with opacity handled by the view. -->
+    <solid android:color="#808080" />
+    <padding
+        android:left="10dp"
+        android:top="8dp"
+        android:right="10dp"
+        android:bottom="8dp" />
+</shape>

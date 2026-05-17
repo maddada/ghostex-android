@@ -379,12 +379,20 @@ public class TermuxPluginUtils {
 
         // Must ensure result code for PendingIntents and id for notification are unique otherwise will override previous
         int nextNotificationId = TermuxNotificationUtils.getNextNotificationId(termuxPackageContext);
+        /*
+        CDXC:AndroidReleaseSurface 2026-05-17-16:54:
+        Plugin error report notification intents open fixed in-app report
+        screens. Even though Ghostex Android disables the stock plugin surface,
+        keep this retained upstream code immutable so no release notification
+        path depends on mutable PendingIntent behavior.
+        */
+        int reportPendingIntentFlags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
 
-        PendingIntent contentIntent = PendingIntent.getActivity(termuxPackageContext, nextNotificationId, result.contentIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+        PendingIntent contentIntent = PendingIntent.getActivity(termuxPackageContext, nextNotificationId, result.contentIntent, reportPendingIntentFlags);
 
         PendingIntent deleteIntent = null;
         if (result.deleteIntent != null)
-            deleteIntent = PendingIntent.getBroadcast(termuxPackageContext, nextNotificationId, result.deleteIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+            deleteIntent = PendingIntent.getBroadcast(termuxPackageContext, nextNotificationId, result.deleteIntent, reportPendingIntentFlags);
 
         // Setup the notification channel if not already set up
         setupPluginCommandErrorsNotificationChannel(termuxPackageContext);

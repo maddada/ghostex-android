@@ -248,10 +248,27 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             e.isCtrlPressed() && e.isAltPressed()) {
             // Get the unmodified code point:
             int unicodeChar = e.getUnicodeChar(0);
+            boolean ghostexMode = mActivity.isGhostexAndroidMode();
+
+            /*
+            CDXC:AndroidRemoteSessions 2026-05-17-13:11:
+            Ghostex Android keeps warm SSH attach terminals internally, but
+            users should switch and manage remote sessions through the Ghostex
+            drawer. Hardware shortcuts must not create, rename, or switch raw
+            local Termux sessions while Ghostex mode is active.
+            */
 
             if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN || unicodeChar == 'n'/* next */) {
+                if (ghostexMode) {
+                    mActivity.getDrawer().openDrawer(Gravity.LEFT);
+                    return true;
+                }
                 mTermuxTerminalSessionActivityClient.switchToSession(true);
             } else if (keyCode == KeyEvent.KEYCODE_DPAD_UP || unicodeChar == 'p' /* previous */) {
+                if (ghostexMode) {
+                    mActivity.getDrawer().openDrawer(Gravity.LEFT);
+                    return true;
+                }
                 mTermuxTerminalSessionActivityClient.switchToSession(false);
             } else if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
                 mActivity.getDrawer().openDrawer(Gravity.LEFT);
@@ -262,8 +279,16 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             } else if (unicodeChar == 'm'/* menu */) {
                 mActivity.getTerminalView().showContextMenu();
             } else if (unicodeChar == 'r'/* rename */) {
+                if (ghostexMode) {
+                    mActivity.getDrawer().openDrawer(Gravity.LEFT);
+                    return true;
+                }
                 mTermuxTerminalSessionActivityClient.renameSession(currentSession);
             } else if (unicodeChar == 'c'/* create */) {
+                if (ghostexMode) {
+                    mActivity.getDrawer().openDrawer(Gravity.LEFT);
+                    return true;
+                }
                 mTermuxTerminalSessionActivityClient.addNewSession(false, null);
             } else if (unicodeChar == 'u' /* urls */) {
                 showUrlSelection();
@@ -276,6 +301,10 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             } else if (unicodeChar == '-') {
                 changeFontSize(false);
             } else if (unicodeChar >= '1' && unicodeChar <= '9') {
+                if (ghostexMode) {
+                    mActivity.getDrawer().openDrawer(Gravity.LEFT);
+                    return true;
+                }
                 int index = unicodeChar - '1';
                 mTermuxTerminalSessionActivityClient.switchToSession(index);
             }
@@ -473,15 +502,31 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
                     if (codePointLowerCase == shortcut.codePoint) {
                         switch (shortcut.shortcutAction) {
                             case TermuxPropertyConstants.ACTION_SHORTCUT_CREATE_SESSION:
+                                if (mActivity.isGhostexAndroidMode()) {
+                                    mActivity.getDrawer().openDrawer(Gravity.LEFT);
+                                    return true;
+                                }
                                 mTermuxTerminalSessionActivityClient.addNewSession(false, null);
                                 return true;
                             case TermuxPropertyConstants.ACTION_SHORTCUT_NEXT_SESSION:
+                                if (mActivity.isGhostexAndroidMode()) {
+                                    mActivity.getDrawer().openDrawer(Gravity.LEFT);
+                                    return true;
+                                }
                                 mTermuxTerminalSessionActivityClient.switchToSession(true);
                                 return true;
                             case TermuxPropertyConstants.ACTION_SHORTCUT_PREVIOUS_SESSION:
+                                if (mActivity.isGhostexAndroidMode()) {
+                                    mActivity.getDrawer().openDrawer(Gravity.LEFT);
+                                    return true;
+                                }
                                 mTermuxTerminalSessionActivityClient.switchToSession(false);
                                 return true;
                             case TermuxPropertyConstants.ACTION_SHORTCUT_RENAME_SESSION:
+                                if (mActivity.isGhostexAndroidMode()) {
+                                    mActivity.getDrawer().openDrawer(Gravity.LEFT);
+                                    return true;
+                                }
                                 mTermuxTerminalSessionActivityClient.renameSession(mActivity.getCurrentSession());
                                 return true;
                         }
