@@ -1,13 +1,12 @@
-Termux is a terminal emulator application enhanced with a large set of command line utilities ported to Android OS. The main goal is to bring a Linux command line experience to users of mobile devices with no rooting or other special setup required.
+Ghostex Android connects your phone to the Ghostex sessions already running on your Mac.
 
-* Enjoy the Bash and Zsh shells.
-* Edit files with nano and vim.
-* Access servers over SSH.
-* Compile C/C++ code with clang.
-* Use the Python console as a pocket calculator.
-* Check out projects with Git and Subversion.
-* Run text-based games with frotz.
+The app opens a Termux-backed terminal surface, reaches your Mac over Tailscale SSH, asks the Ghostex CLI for the live session list, and attaches to ZMX-backed sessions so your work stays persistent on the main machine.
 
-At first start a small base system is being configured. The GNU Bash, Coreutils, Findutils and other core utilities are available out-of-box. Additionally, we provide more than 1000 other packages installable by using the 'pkg' utility which currently is a frontend for the 'apt' package manager. All provided software has been patched and compiled with Android NDK to provide max compatibility with Android OS.
+Core workflow:
+* Save multiple SSH machines and switch between them from the Ghostex drawer.
+* Reconnect automatically to the last selected machine when the app reopens.
+* Open Tailscale from setup and recovery screens.
+* Use the first-run setup guide to configure Tailscale, macOS Remote Login, Ghostex CLI, and ZMX.
+* Keep recently opened remote sessions warm for faster switching.
 
-To learn more about application usage tips and tricks, long-press anywhere on the terminal and select the Help menu option to access Termux Wiki. This resource is also accessible directly in a web browser: https://wiki.termux.com/wiki/Main_Page.
+Ghostex Android currently supports ZMX-backed Ghostex sessions only. The Android terminal is the attach surface; the persistent sessions continue to live on the Mac.

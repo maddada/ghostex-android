@@ -1,9 +1,8 @@
 name: Attach Debug APKs To Release
 
+# CDXC:AndroidReleaseCI 2026-05-17-16:49: Do not automatically attach upstream Termux debug APKs to Ghostex Android releases. Keep this upstream workflow manual-only until it is either removed or rewritten for Ghostex release artifacts.
 on:
-  release:
-    types:
-      - published
+  workflow_dispatch:
 
 jobs:
   attach-apks:
@@ -17,7 +16,7 @@ jobs:
 
     steps:
       - name: Clone repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           ref: ${{ env.GITHUB_REF }}
 
@@ -42,7 +41,7 @@ jobs:
 
           APK_DIR_PATH="./app/build/outputs/apk/debug"
           APK_VERSION_TAG="$RELEASE_VERSION_NAME+${{ env.PACKAGE_VARIANT }}-github-debug"
-          APK_BASENAME_PREFIX="termux-app_$APK_VERSION_TAG"
+          APK_BASENAME_PREFIX="ghostex-android_$APK_VERSION_TAG"
 
           echo "Building APKs for 'APK_VERSION_TAG' release"
           export TERMUX_APK_VERSION_TAG="$APK_VERSION_TAG" # Used by app/build.gradle

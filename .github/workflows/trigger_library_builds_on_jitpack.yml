@@ -1,9 +1,8 @@
 name: Trigger Termux Library Builds on Jitpack
 
+# CDXC:AndroidReleaseCI 2026-05-17-16:49: Ghostex Android releases should not trigger upstream Termux JitPack library fetches. Keep this workflow manual-only as an upstream sync marker.
 on:
-  release:
-    types:
-      - published
+  workflow_dispatch:
 
 jobs:
   trigger-termux-library-builds:

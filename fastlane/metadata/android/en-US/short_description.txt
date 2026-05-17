@@ -1,1 +1,1 @@
-Terminal emulator app with a large set of command line utilities
+Connect to your Mac's persistent Ghostex ZMX sessions.

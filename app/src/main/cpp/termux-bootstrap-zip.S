@@ -3,13 +3,13 @@
      .section .rodata
  blob:
  #if defined __i686__
-     .incbin "bootstrap-i686.zip"
+     .incbin GHOSTEX_BOOTSTRAP_I686
  #elif defined __x86_64__
-     .incbin "bootstrap-x86_64.zip"
+     .incbin GHOSTEX_BOOTSTRAP_X86_64
  #elif defined __aarch64__
-     .incbin "bootstrap-aarch64.zip"
+     .incbin GHOSTEX_BOOTSTRAP_AARCH64
  #elif defined __arm__
-     .incbin "bootstrap-arm.zip"
+     .incbin GHOSTEX_BOOTSTRAP_ARM
  #else
  # error Unsupported arch
  #endif

@@ -1,13 +1,18 @@
 ---
-page_ref: /docs/apps/termux/index.html
+page_ref: /docs/apps/ghostex-android/index.html
 ---
 
-# Termux App Docs
+# Ghostex Android Docs
 
-<!--- DOC_HEADER_PLACEHOLDER -->
+<!--
+CDXC:AndroidBranding 2026-05-17-16:38:
+Repo documentation should introduce Ghostex Android as the shipped product.
+Keep upstream Termux references as lineage/supporting implementation context,
+not as the primary docs landing page.
+-->
 
-Welcome to documentation for the [Termux App].
+Ghostex Android connects an Android terminal surface to persistent Ghostex sessions running on a Mac.
 
-##
+It uses Tailscale SSH to reach the Mac, calls the Ghostex CLI for the live session list, and attaches to ZMX-backed sessions. The first Android release supports ZMX only.
 
-[Termux App]: https://github.com/termux/termux-app
+See the repository README for setup, release verification, and upstream-sync notes.

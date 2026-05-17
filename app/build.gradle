@@ -10,15 +10,33 @@ ext {
     // by replacing $PREFIX since app code is dependant on the variant used to build the APK.
     // Currently supported values are: [ "apt-android-7" "apt-android-5" ]
     packageVariant = System.getenv("TERMUX_PACKAGE_VARIANT") ?: "apt-android-7" // Default: "apt-android-7"
+    upstreamTermuxRuntimePackageName = "com.termux"
+    /*
+    CDXC:AndroidSideBySideInstall 2026-05-17-23:39:
+    Ghostex Android must install next to upstream Termux, so its runtime
+    application id cannot be `com.termux`. Keep the Java namespace upstream-
+    shaped, but use a Ghostex-owned Android package id that has the same byte
+    length as `com.termux`; the current bundled bootstrap contains absolute
+    prefix strings and can only be patched safely in-place when the replacement
+    prefix length is identical.
+    */
+    ghostexRuntimePackageName = stringPropertyOrEnv(project, "ghostexAndroidPackageName", "GHOSTEX_ANDROID_PACKAGE_NAME") ?: "com.ghostx"
 }
+
+def ghostexReleaseSigning = resolveGhostexAndroidReleaseSigning(project)
+def ghostexAppVersionName = stringPropertyOrEnv(project, "ghostexAndroidVersionName", "GHOSTEX_ANDROID_VERSION_NAME")
+    ?: stringPropertyOrEnv(project, "termuxAppVersionName", "TERMUX_APP_VERSION_NAME")
+    ?: "0.1.0"
+def ghostexAppVersionCode = positiveIntegerPropertyOrEnv(project, "ghostexAndroidVersionCode", "GHOSTEX_ANDROID_VERSION_CODE", 118)
 
 android {
     namespace "com.termux"
 
     compileSdkVersion project.properties.compileSdkVersion.toInteger()
     ndkVersion = System.getenv("JITPACK_NDK_VERSION") ?: project.properties.ndkVersion
-    def appVersionName = System.getenv("TERMUX_APP_VERSION_NAME") ?: ""
-    def apkVersionTag = System.getenv("TERMUX_APK_VERSION_TAG") ?: ""
+    def apkVersionTag = stringPropertyOrEnv(project, "ghostexAndroidApkVersionTag", "GHOSTEX_ANDROID_APK_VERSION_TAG")
+        ?: stringPropertyOrEnv(project, "termuxApkVersionTag", "TERMUX_APK_VERSION_TAG")
+        ?: ""
     def splitAPKsForDebugBuilds = System.getenv("TERMUX_SPLIT_APKS_FOR_DEBUG_BUILDS") ?: "1"
     def splitAPKsForReleaseBuilds = System.getenv("TERMUX_SPLIT_APKS_FOR_RELEASE_BUILDS") ?: "0" // F-Droid does not support split APKs #1904
 
@@ -41,18 +59,28 @@ android {
     }
 
     defaultConfig {
+        applicationId project.ext.ghostexRuntimePackageName
         minSdkVersion project.properties.minSdkVersion.toInteger()
         targetSdkVersion project.properties.targetSdkVersion.toInteger()
-        versionCode 118
-        versionName "0.118.0"
+        /*
+        CDXC:AndroidBranding 2026-05-17-15:08:
+        APK metadata is part of the released product identity. Keep the runtime
+        package side-by-side with upstream Termux, and use Ghostex-owned version
+        inputs so distributed builds do not present as upstream Termux 0.118.0.
+        */
+        versionCode ghostexAppVersionCode
+        versionName ghostexAppVersionName
 
-        if (appVersionName) versionName = appVersionName
         validateVersionName(versionName)
 
         buildConfigField "String", "TERMUX_PACKAGE_VARIANT", "\"" + project.ext.packageVariant + "\"" // Used by TermuxApplication class
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
-        manifestPlaceholders.TERMUX_PACKAGE_NAME = "com.termux"
-        manifestPlaceholders.TERMUX_APP_NAME = "Termux"
+        manifestPlaceholders.TERMUX_PACKAGE_NAME = project.ext.ghostexRuntimePackageName
+        // CDXC:AndroidBranding 2026-05-17-10:13: Release builds should present as Ghostex Android while retaining the Termux Java namespace for upstream sync.
+        // CDXC:AndroidBranding 2026-05-17-10:37: APK artifacts use a Ghostex Android filename so release testing does not ship Termux-branded build outputs from this Android submodule.
+        // CDXC:AndroidSideBySideInstall 2026-05-17-23:39: Manifest package-sensitive surfaces must use the Ghostex runtime id so Android can install Ghostex beside upstream Termux.
+        manifestPlaceholders.TERMUX_APP_NAME = "Ghostex Android"
         manifestPlaceholders.TERMUX_API_APP_NAME = "Termux:API"
         manifestPlaceholders.TERMUX_BOOT_APP_NAME = "Termux:Boot"
         manifestPlaceholders.TERMUX_FLOAT_APP_NAME = "Termux:Float"
@@ -63,6 +91,7 @@ android {
         externalNativeBuild {
             ndkBuild {
                 cFlags "-std=c11", "-Wall", "-Wextra", "-Werror", "-Os", "-fno-stack-protector", "-Wl,--gc-sections"
+                arguments "GHOSTEX_BOOTSTRAP_DIR=" + ghostexPreparedBootstrapDir(project).absolutePath
             }
         }
 
@@ -84,6 +113,21 @@ android {
             storePassword 'xrj45yWGLbsO7W0v'
             keyPassword 'xrj45yWGLbsO7W0v'
         }
+        if (ghostexReleaseSigning.configured) {
+            /*
+            CDXC:AndroidReleaseSurface 2026-05-17-15:02:
+            A publishable Ghostex Android release must use signing material
+            supplied by the local machine or CI, not the upstream Termux shared
+            test key. Keep debug signing available for developer builds while
+            release signing stays explicit and outside the repository.
+            */
+            release {
+                storeFile file(ghostexReleaseSigning.storeFile)
+                keyAlias ghostexReleaseSigning.keyAlias
+                storePassword ghostexReleaseSigning.storePassword
+                keyPassword ghostexReleaseSigning.keyPassword
+            }
+        }
     }
 
     buildTypes {
@@ -91,6 +135,7 @@ android {
             minifyEnabled true
             shrinkResources false // Reproducible builds
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (ghostexReleaseSigning.configured) signingConfig signingConfigs.release
         }
 
         debug {
@@ -130,12 +175,15 @@ android {
 
     applicationVariants.all { variant ->
         variant.outputs.all { output ->
+            def abi = output.getFilter(com.android.build.OutputFile.ABI)
+            def outputTag = apkVersionTag
+                ? apkVersionTag
+                : ghostexAndroidApkOutputTag(project.ext.packageVariant, variant.buildType.name,
+                    android.defaultConfig.versionName, android.defaultConfig.versionCode)
             if (variant.buildType.name == "debug") {
-                def abi = output.getFilter(com.android.build.OutputFile.ABI)
-                outputFileName = new File("termux-app_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "debug") + "_" + (abi ? abi : "universal") + ".apk")
+                outputFileName = new File("ghostex-android_" + outputTag + "_" + (abi ? abi : "universal") + ".apk")
             } else if (variant.buildType.name == "release") {
-                def abi = output.getFilter(com.android.build.OutputFile.ABI)
-                outputFileName = new File("termux-app_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "release") + "_" + (abi ? abi : "universal") + ".apk")
+                outputFileName = new File("ghostex-android_" + outputTag + "_" + (abi ? abi : "universal") + ".apk")
             }
         }
     }
@@ -147,8 +195,168 @@ android {
 
 dependencies {
     testImplementation "junit:junit:4.13.2"
-    testImplementation "org.robolectric:robolectric:4.10"
+    /*
+    CDXC:AndroidReleaseSurface 2026-05-17-17:00:
+    Target API 35 release builds require a Robolectric version that can pick a
+    modern Android SDK for app/manifest-backed unit tests.
+    */
+    testImplementation "org.robolectric:robolectric:4.16.1"
+    /*
+    CDXC:AndroidReleaseE2E 2026-05-17-16:30:
+    Release readiness needs a real-device Tailscale/SSH/Ghostex/zmx proof, not
+    only JVM source gates. Keep the instrumentation dependency scoped to
+    androidTest so normal app builds do not ship test runners or E2E code.
+    */
+    androidTestImplementation "androidx.test:runner:1.6.2"
+    androidTestImplementation "androidx.test.ext:junit:1.2.1"
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:1.1.5"
+}
+
+def resolveGhostexAndroidReleaseSigning(project) {
+    def signing = [
+        storeFile: stringPropertyOrEnv(project, "ghostexAndroidSigningStoreFile", "GHOSTEX_ANDROID_SIGNING_STORE_FILE"),
+        storePassword: stringPropertyOrEnv(project, "ghostexAndroidSigningStorePassword", "GHOSTEX_ANDROID_SIGNING_STORE_PASSWORD"),
+        keyAlias: stringPropertyOrEnv(project, "ghostexAndroidSigningKeyAlias", "GHOSTEX_ANDROID_SIGNING_KEY_ALIAS"),
+        keyPassword: stringPropertyOrEnv(project, "ghostexAndroidSigningKeyPassword", "GHOSTEX_ANDROID_SIGNING_KEY_PASSWORD")
+    ]
+    def configuredValues = signing.findAll { _, value -> value != null && !value.trim().isEmpty() }
+    if (!configuredValues.isEmpty() && configuredValues.size() != signing.size()) {
+        throw new GradleException("Configure all Ghostex Android release signing values: GHOSTEX_ANDROID_SIGNING_STORE_FILE, GHOSTEX_ANDROID_SIGNING_STORE_PASSWORD, GHOSTEX_ANDROID_SIGNING_KEY_ALIAS, and GHOSTEX_ANDROID_SIGNING_KEY_PASSWORD.")
+    }
+    signing.configured = configuredValues.size() == signing.size()
+    return signing
+}
+
+def stringPropertyOrEnv(project, String propertyName, String envName) {
+    def propertyValue = project.findProperty(propertyName)
+    if (propertyValue != null && !propertyValue.toString().trim().isEmpty()) return propertyValue.toString()
+    def envValue = System.getenv(envName)
+    return envValue == null || envValue.trim().isEmpty() ? null : envValue
+}
+
+def isGhostexAndroidReleaseSigningRequired(project) {
+    def value = stringPropertyOrEnv(project, "ghostexAndroidRequireReleaseSigning", "GHOSTEX_ANDROID_REQUIRE_RELEASE_SIGNING")
+    return value != null && ["1", "true", "yes"].contains(value.toLowerCase(java.util.Locale.US))
+}
+
+def positiveIntegerPropertyOrEnv(project, String propertyName, String envName, int defaultValue) {
+    def value = stringPropertyOrEnv(project, propertyName, envName)
+    if (value == null) return defaultValue
+    try {
+        int parsed = Integer.parseInt(value)
+        if (parsed > 0) return parsed
+    } catch (NumberFormatException ignored) {
+    }
+    throw new GradleException(envName + " must be a positive integer.")
+}
+
+def ghostexAndroidApkOutputTag(String packageVariant, String buildType, String versionName, Integer versionCode) {
+    /*
+    CDXC:AndroidBranding 2026-05-17-16:25:
+    Release APK/AAB filenames are handoff artifacts. Include Ghostex-owned
+    version name/code by default so install-test and publish artifacts are
+    traceable without opening output metadata, while still allowing CI to
+    override the APK tag when it needs a channel or commit label.
+    */
+    def safeVersionName = versionName.replaceAll(/[^0-9A-Za-z._-]/, "_")
+    return "v" + safeVersionName + "+" + versionCode + "-" + packageVariant + "-" + buildType
+}
+
+task copyGhostexReleaseBundle() {
+    mustRunAfter "bundleRelease"
+    doLast {
+        /*
+        CDXC:AndroidReleaseCI 2026-05-17-18:08:
+        Local release verification should produce the same Ghostex-named Android
+        App Bundle that CI uploads for store submission, not only Gradle's
+        default `app-release.aab` filename.
+        */
+        def bundleDir = new File(buildDir, "outputs/bundle/release")
+        def sourceBundles = bundleDir.listFiles({ File dir, String name ->
+            name.endsWith(".aab") && !name.startsWith("ghostex-android_")
+        } as FilenameFilter) ?: [] as File[]
+        if (sourceBundles.length != 1) {
+            throw new GradleException("Expected exactly one generated release AAB in " + bundleDir + ", found " + sourceBundles.length + ".")
+        }
+        def previousGhostexBundles = bundleDir.listFiles({ File dir, String name ->
+            name.endsWith(".aab") && name.startsWith("ghostex-android_")
+        } as FilenameFilter) ?: [] as File[]
+        previousGhostexBundles.each { it.delete() }
+        def outputTag = ghostexAndroidApkOutputTag(project.ext.packageVariant, "release",
+            android.defaultConfig.versionName, android.defaultConfig.versionCode)
+        def output = new File(bundleDir, "ghostex-android_" + outputTag + ".aab")
+        java.nio.file.Files.copy(sourceBundles[0].toPath(), output.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+    }
+}
+
+task cleanGhostexReleaseApkOutputs() {
+    doLast {
+        /*
+        CDXC:AndroidReleaseCI 2026-05-17-21:44:
+        Release APK directories can retain stale Ghostex split/universal files
+        when Gradle task inputs change between local and CI builds. Remove prior
+        Ghostex APK handoff artifacts before packaging so checksums, signature
+        proof, and upload globs describe only the current release build.
+        */
+        def apkDir = new File(buildDir, "outputs/apk/release")
+        if (!apkDir.exists()) return
+        (apkDir.listFiles({ File dir, String name ->
+            (name.startsWith("ghostex-android_") && name.endsWith(".apk")) ||
+                name == "SHA256SUMS" ||
+                name == "output-metadata.json"
+        } as FilenameFilter) ?: [] as File[]).each { file ->
+            if (!file.delete()) {
+                throw new GradleException("Could not remove stale Ghostex release APK artifact: " + file)
+            }
+        }
+    }
+}
+
+task generateGhostexReleaseChecksums() {
+    dependsOn "assembleRelease", "bundleRelease", "copyGhostexReleaseBundle"
+    mustRunAfter "copyGhostexReleaseBundle"
+    doLast {
+        /*
+        CDXC:AndroidReleaseCI 2026-05-17-20:58:
+        Release artifacts need the same reviewable checksum evidence locally
+        and in CI. Generate APK/AAB SHA256SUMS from Gradle after the Ghostex
+        bundle copy runs so `npm run android:verify-release:local` and the
+        release-candidate workflow prove identical artifact handoff state.
+        */
+        def apkDir = new File(buildDir, "outputs/apk/release")
+        def bundleDir = new File(buildDir, "outputs/bundle/release")
+        def apks = ghostexReleaseApksFromMetadata(apkDir)
+        if (apks.isEmpty()) {
+            throw new GradleException("No Ghostex Android release APKs found in " + apkDir + ".")
+        }
+        def bundles = ghostexReleaseArtifacts(bundleDir, ~/ghostex-android_.*\.aab/)
+        if (bundles.size() != 1) {
+            throw new GradleException("Expected exactly one Ghostex-named Android release AAB in " + bundleDir + ", found " + bundles.size() + ".")
+        }
+        writeGhostexReleaseSha256Sums(new File(apkDir, "SHA256SUMS"), apks)
+        writeGhostexReleaseSha256Sums(new File(bundleDir, "SHA256SUMS"), bundles)
+    }
+}
+
+task verifyGhostexReleaseChecksums() {
+    dependsOn generateGhostexReleaseChecksums
+    doLast {
+        /*
+        CDXC:AndroidReleaseCI 2026-05-17-20:58:
+        A release verification pass is incomplete if the APK/AAB checksum files
+        are stale or describe a different artifact set. Re-read SHA256SUMS and
+        recompute digests so local release validation catches drift before a
+        candidate is handed to QA or uploaded by CI.
+        */
+        def apkDir = new File(buildDir, "outputs/apk/release")
+        def bundleDir = new File(buildDir, "outputs/bundle/release")
+        verifyGhostexReleaseSha256Sums(new File(apkDir, "SHA256SUMS"),
+            ghostexReleaseApksFromMetadata(apkDir),
+            "release APK")
+        verifyGhostexReleaseSha256Sums(new File(bundleDir, "SHA256SUMS"),
+            ghostexReleaseArtifacts(bundleDir, ~/ghostex-android_.*\.aab/),
+            "release AAB")
+    }
 }
 
 task versionName {
@@ -236,8 +444,1936 @@ task downloadBootstraps() {
     }
 }
 
+def validateGhostexRuntimePackageName(String packageName, String upstreamPackageName) {
+    if (!(packageName ==~ /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/)) {
+        throw new GradleException("Ghostex Android package id is invalid: " + packageName)
+    }
+    if (packageName != upstreamPackageName && packageName.length() != upstreamPackageName.length()) {
+        throw new GradleException("Ghostex Android package id " + packageName + " must be " + upstreamPackageName.length() + " bytes long while the bundled bootstrap is binary-patched from " + upstreamPackageName + ".")
+    }
+}
+
+def ghostexPreparedBootstrapDir(project) {
+    return new File(project.buildDir, "generated/ghostex/bootstrap")
+}
+
+def replaceGhostexBootstrapPrefix(byte[] bytes, byte[] source, byte[] target) {
+    if (source.length != target.length) {
+        throw new GradleException("Ghostex bootstrap prefix replacement must keep byte length identical.")
+    }
+    byte[] output = java.util.Arrays.copyOf(bytes, bytes.length)
+    int replacements = 0
+    for (int i = 0; i <= output.length - source.length; i++) {
+        boolean match = true
+        for (int j = 0; j < source.length; j++) {
+            if (output[i + j] != source[j]) {
+                match = false
+                break
+            }
+        }
+        if (match) {
+            System.arraycopy(target, 0, output, i, target.length)
+            replacements++
+            i += source.length - 1
+        }
+    }
+    return [bytes: output, replacements: replacements]
+}
+
+task prepareGhostexBootstrapArchives() {
+    dependsOn downloadBootstraps
+    def preparedDir = ghostexPreparedBootstrapDir(project)
+    inputs.property("ghostexRuntimePackageName", project.ext.ghostexRuntimePackageName)
+    inputs.files(["aarch64", "arm", "i686", "x86_64"].collect { arch -> new File(projectDir, "src/main/cpp/bootstrap-" + arch + ".zip") })
+    outputs.dir(preparedDir)
+    doLast {
+        /*
+        CDXC:AndroidSideBySideInstall 2026-05-17-23:39:
+        The user needs a Ghostex Android APK that installs beside Termux.
+        Generate build-local bootstrap archives whose hardcoded app-data root
+        matches the Ghostex app id, while leaving upstream downloaded bootstrap
+        zips in `src/main/cpp` untouched for easier upstream synchronization.
+
+        CDXC:AndroidSideBySideInstall 2026-05-18-00:32:
+        Termux package scripts also reference app-private cache paths such as
+        `/data/data/com.termux/cache/apt`, not only `$PREFIX`. Patch the whole
+        `/data/data/<package>` root so `pkg install` does not try to write into
+        upstream Termux's private cache directory.
+        */
+        validateGhostexRuntimePackageName(project.ext.ghostexRuntimePackageName, project.ext.upstreamTermuxRuntimePackageName)
+        preparedDir.mkdirs()
+        def sourcePrefix = ("/data/data/" + project.ext.upstreamTermuxRuntimePackageName).getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        def targetPrefix = ("/data/data/" + project.ext.ghostexRuntimePackageName).getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        ["aarch64", "arm", "i686", "x86_64"].each { arch ->
+            def sourceArchive = new File(projectDir, "src/main/cpp/bootstrap-" + arch + ".zip")
+            def targetArchive = new File(preparedDir, "bootstrap-" + arch + ".zip")
+            int replacements = 0
+            new java.util.zip.ZipFile(sourceArchive).withCloseable { zip ->
+                new java.util.zip.ZipOutputStream(new BufferedOutputStream(new FileOutputStream(targetArchive))).withCloseable { out ->
+                    zip.entries().each { entry ->
+                        def targetEntry = new java.util.zip.ZipEntry(entry.name)
+                        targetEntry.time = entry.time
+                        targetEntry.comment = entry.comment
+                        out.putNextEntry(targetEntry)
+                        if (!entry.isDirectory()) {
+                            byte[] entryBytes
+                            zip.getInputStream(entry).withCloseable { stream ->
+                                entryBytes = stream.bytes
+                            }
+                            def replaced = replaceGhostexBootstrapPrefix(entryBytes, sourcePrefix, targetPrefix)
+                            replacements += replaced.replacements
+                            out.write(replaced.bytes)
+                        }
+                        out.closeEntry()
+                    }
+                }
+            }
+            if (replacements <= 0) {
+                throw new GradleException("No bootstrap prefix occurrences were patched for " + arch + ".")
+            }
+        }
+    }
+}
+
+task verifyGhostexBootstrapPrefix() {
+    dependsOn prepareGhostexBootstrapArchives
+    doLast {
+        /*
+        CDXC:AndroidBranding 2026-05-17-11:38:
+        The Android package id is not a cosmetic setting for Termux-based apps.
+        Bootstrap binaries and later apt packages contain the absolute prefix,
+        so release builds must fail loudly if the Java/manifest package changes
+        without a matching Ghostex-built bootstrap and package repository.
+
+        CDXC:AndroidSideBySideInstall 2026-05-17-23:39:
+        Until a Ghostex package repository rebuild exists, side-by-side install
+        relies on build-local bootstrap archives patched from `com.termux` to
+        the same-length `com.ghostx` app-data root. Verify the embedded native
+        zips point at the runtime package that Android will install.
+        */
+        def expectedPrefix = "/data/data/" + project.ext.ghostexRuntimePackageName + "/files/usr"
+        def unsupportedRoot = "/data/data/" + project.ext.upstreamTermuxRuntimePackageName
+        ["aarch64", "arm", "i686", "x86_64"].each { arch ->
+            def file = new File(ghostexPreparedBootstrapDir(project), "bootstrap-" + arch + ".zip")
+            if (!file.exists()) {
+                throw new GradleException("Missing bootstrap archive for " + arch + ": " + file)
+            }
+            def found = false
+            def foundUnsupported = false
+            new java.util.zip.ZipFile(file).withCloseable { zip ->
+                zip.entries().each { entry ->
+                    if (!entry.isDirectory()) {
+                        def stream = zip.getInputStream(entry)
+                        try {
+                            byte[] bytes = stream.bytes
+                            String text = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1)
+                            if (text.contains(expectedPrefix)) found = true
+                            if (text.contains(unsupportedRoot)) foundUnsupported = true
+                        } finally {
+                            stream.close()
+                        }
+                    }
+                }
+            }
+            if (!found) {
+                throw new GradleException("Bootstrap archive " + file.name + " does not contain expected prefix " + expectedPrefix + ".")
+            }
+            if (foundUnsupported && project.ext.ghostexRuntimePackageName != project.ext.upstreamTermuxRuntimePackageName) {
+                throw new GradleException("Bootstrap archive " + file.name + " still contains upstream runtime root " + unsupportedRoot + ".")
+            }
+        }
+    }
+}
+
+task verifyGhostexReleasePermissions() {
+    dependsOn "processReleaseManifestForPackage"
+    doLast {
+        /*
+        CDXC:AndroidReleaseSurface 2026-05-17-19:08:
+        Ghostex Android is released as a remote-session client, not the full
+        stock Termux utility surface. Fail release builds if manifest merging
+        reintroduces broad permissions for disabled generic workflows.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-19:43:
+        Also fail if the stock RUN_COMMAND permission/action or static boot
+        receiver action returns. Those surfaces do not belong to the Ghostex
+        remote-session app contract.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-13:14:
+        The release manifest should not retain Termux's legacy external-storage
+        compatibility flag. Ghostex Android does not expose stock file workflows,
+        and remote SSH/ZMX work stays in the app-private Termux prefix.
+
+        CDXC:AndroidConnectionManagement 2026-05-17-14:18:
+        The Open Tailscale action requires a narrow Android 11+ package
+        visibility query for `com.tailscale.ipn`. Keep that query present while
+        still rejecting broad package-query permissions.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-17:00:
+        Release builds target API 35 for current Google Play compatibility.
+        Keep the POST_NOTIFICATIONS permission, TermuxService specialUse
+        foreground-service type, and reviewer-readable special-use subtype
+        present so Android 13/14+ foreground-service behavior is explicit.
+
+        CDXC:AndroidConnectionSecurity 2026-05-17-20:17:
+        Saved SSH machines and credential bookkeeping are local device state.
+        Keep Android 12+ data extraction and legacy backup rules excluding app
+        data so stale machine targets do not migrate to another phone.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-17:32:
+        The runtime package still carries Termux's legacy shared UID for
+        bootstrap compatibility, but Ghostex release installs on Android 13+
+        should cap that deprecated shared-user behavior because plugin and
+        generic utility surfaces are disabled.
+        */
+        def targetApiLevel = project.properties.targetSdkVersion.toString().toInteger()
+        if (targetApiLevel < 35) {
+            throw new GradleException("Ghostex Android release targetSdkVersion must be 35 or higher. Current targetSdkVersion=" + targetApiLevel + ".")
+        }
+        def manifestRoots = [
+            new File(buildDir, "intermediates/merged_manifest/release"),
+            new File(buildDir, "intermediates/merged_manifests/release"),
+            new File(buildDir, "intermediates/packaged_manifests/release")
+        ]
+        def manifests = []
+        manifestRoots.each { root ->
+            if (root.exists()) {
+                root.eachFileRecurse { file ->
+                    if (file.name == "AndroidManifest.xml") manifests.add(file)
+                }
+            }
+        }
+        if (manifests.isEmpty()) {
+            throw new GradleException("No merged release manifests found under " + manifestRoots.join(", "))
+        }
+        def forbiddenPermissions = [
+            "android.permission.READ_EXTERNAL_STORAGE",
+            "android.permission.WRITE_EXTERNAL_STORAGE",
+            "android.permission.MANAGE_EXTERNAL_STORAGE",
+            "android.permission.SYSTEM_ALERT_WINDOW",
+            "android.permission.READ_LOGS",
+            "android.permission.DUMP",
+            "android.permission.WRITE_SECURE_SETTINGS",
+            "android.permission.REQUEST_INSTALL_PACKAGES",
+            "android.permission.QUERY_ALL_PACKAGES",
+            "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+            "android.permission.RECEIVE_BOOT_COMPLETED",
+            "android.permission.PACKAGE_USAGE_STATS",
+            "com.android.alarm.permission.SET_ALARM"
+        ]
+        def violations = []
+        manifests.each { manifest ->
+            def text = manifest.getText("UTF-8")
+            if (text.contains("android:requestLegacyExternalStorage=\"true\"")) {
+                violations.add(manifest.name + ": requestLegacyExternalStorage=true")
+            }
+            if (!text.contains("android:allowBackup=\"false\"") ||
+                !text.contains("android:dataExtractionRules=\"@xml/data_extraction_rules\"") ||
+                !text.contains("android:fullBackupContent=\"@xml/backup_rules\"")) {
+                violations.add(manifest.name + ": app backup/data extraction must stay disabled for saved SSH machine state")
+            }
+            if (!text.contains("android:sharedUserMaxSdkVersion=\"32\"")) {
+                violations.add(manifest.name + ": sharedUserId must be capped with sharedUserMaxSdkVersion=32 for modern Ghostex releases")
+            }
+            forbiddenPermissions.each { permission ->
+                if (text.contains("uses-permission android:name=\"" + permission + "\"") ||
+                    text.contains("uses-permission-sdk-23 android:name=\"" + permission + "\"")) {
+                    violations.add(manifest.name + ": " + permission)
+                }
+            }
+            if (!text.contains("<package android:name=\"com.tailscale.ipn\"")) {
+                violations.add(manifest.name + ": missing Tailscale package visibility query")
+            }
+            if (!text.contains("uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\"")) {
+                violations.add(manifest.name + ": missing Android 13+ notification permission")
+            }
+            if (!text.contains("uses-permission android:name=\"android.permission.FOREGROUND_SERVICE_SPECIAL_USE\"")) {
+                violations.add(manifest.name + ": missing special-use foreground-service permission")
+            }
+            def serviceTag = findManifestTagForComponent(text, ".app.TermuxService")
+            if (serviceTag == null) {
+                violations.add(manifest.name + ": missing TermuxService")
+            } else if (!serviceTag.contains("android:foregroundServiceType=\"specialUse\"")) {
+                violations.add(manifest.name + ": TermuxService must declare android:foregroundServiceType=\"specialUse\" for API 35 release builds")
+            }
+            if (!text.contains("android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE") ||
+                !text.contains("Ghostex remote terminal sessions")) {
+                violations.add(manifest.name + ": missing Ghostex special-use foreground-service subtype")
+            }
+            [
+                [label: "permission.RUN_COMMAND", pattern: /<permission\b[^>]*android:name="[^"]*permission\.RUN_COMMAND"/],
+                [label: ".RUN_COMMAND action", pattern: /<action\b[^>]*android:name="[^"]*\.RUN_COMMAND"/],
+                [label: "BOOT_COMPLETED action", pattern: /<action\b[^>]*android:name="android\.intent\.action\.BOOT_COMPLETED"/]
+            ].each { forbiddenSurface ->
+                if ((text =~ forbiddenSurface.pattern).find()) {
+                    violations.add(manifest.name + ": " + forbiddenSurface.label)
+                }
+            }
+        }
+        if (!violations.isEmpty()) {
+            throw new GradleException("Ghostex Android release manifest contains forbidden permissions: " + violations.join(", "))
+        }
+        [
+            "src/main/res/xml/backup_rules.xml",
+            "src/main/res/xml/data_extraction_rules.xml"
+        ].each { path ->
+            def file = new File(projectDir, path)
+            if (!file.isFile() || !file.getText("UTF-8").contains("<exclude domain=\"root\" path=\".\"")) {
+                throw new GradleException("Ghostex Android release backup/data extraction rule must exclude all app data: " + path)
+            }
+        }
+    }
+}
+
+task verifyGhostexReleaseRuntimeSurface() {
+    doLast {
+        /*
+        CDXC:AndroidReleaseSurface 2026-05-17-13:15:
+        Ghostex Android must not start Termux's local `termux-am` socket server.
+        Keep this as a source gate so upstream syncs cannot silently re-enable a
+        generic Android automation bridge outside the SSH/ZMX product boundary.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-13:17:
+        The foreground service must not dynamically register stock Termux plugin
+        package listeners. Ghostex Android does not refresh a local plugin
+        environment; it connects to remote Ghostex sessions over SSH.
+
+        CDXC:AndroidConnectionSecurity 2026-05-17-15:17:
+        Release builds must keep session-only SSH passwords tied to the Android
+        controller lifetime. If a future refactor removes teardown cleanup, fail
+        the build instead of silently retaining unchecked-password credentials
+        beyond the app lifecycle promise.
+
+        CDXC:AndroidRemoteSessions 2026-05-17-16:28:
+        Ghostex Android startup must not create an ordinary local Termux shell
+        when the service is empty. Keep this source gate beside the runtime
+        surface checks so future upstream syncs cannot restore the stock
+        startup session before the Ghostex SSH/ZMX reconnect flow runs.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-19:58:
+        Dynamic activity receivers for app-private broadcasts must be registered
+        as not exported for target API 35 release lint and to keep Ghostex's
+        activity actions internal to the app.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-20:01:
+        Internal broadcasts sent to that non-exported receiver must be scoped to
+        this package so modern Android does not treat them as unsafe implicit
+        launches.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-20:09:
+        The retained Keep awake notification action may acquire wake and Wi-Fi
+        locks, but it must not open Android's broad battery-optimization
+        exemption flow without a dedicated Ghostex consent path.
+
+        CDXC:AndroidConnectionSecurity 2026-05-17-19:59:
+        Saved-password entries can become unreadable after restore, keystore
+        invalidation, or file corruption. Release builds must keep the vault
+        and controller self-healing those entries so reconnect falls back to
+        explicit credential recovery instead of stale saved-password state.
+        */
+        def activityFile = new File(projectDir, "src/main/java/com/termux/app/TermuxActivity.java")
+        def activityText = activityFile.getText("UTF-8")
+        if (activityText.contains("registerReceiver(mTermuxActivityBroadcastReceiver, intentFilter)") ||
+            !activityText.contains("ContextCompat.registerReceiver(this, mTermuxActivityBroadcastReceiver, intentFilter,") ||
+            !activityText.contains("ContextCompat.RECEIVER_NOT_EXPORTED")) {
+            throw new GradleException("Ghostex Android activity receiver must be dynamically registered as RECEIVER_NOT_EXPORTED.")
+        }
+        def styleBroadcastIndex = activityText.indexOf("Intent stylingIntent = new Intent(TERMUX_ACTIVITY.ACTION_RELOAD_STYLE);")
+        def styleBroadcastEndIndex = styleBroadcastIndex < 0 ? -1 : activityText.indexOf("context.sendBroadcast(stylingIntent);", styleBroadcastIndex)
+        def styleBroadcastBlock = styleBroadcastIndex >= 0 && styleBroadcastEndIndex > styleBroadcastIndex
+            ? activityText.substring(styleBroadcastIndex, styleBroadcastEndIndex)
+            : ""
+        if (!styleBroadcastBlock.contains("stylingIntent.setPackage(context.getPackageName());")) {
+            throw new GradleException("Ghostex Android internal style broadcast must be package-scoped before sendBroadcast.")
+        }
+        def emptySessionIndex = activityText.indexOf("if (mTermuxService.isTermuxSessionsEmpty())")
+        def nonEmptySessionIndex = emptySessionIndex < 0 ? -1 : activityText.indexOf("// If termux was started from launcher \"New session\" shortcut", emptySessionIndex)
+        def emptySessionBlock = emptySessionIndex >= 0 && nonEmptySessionIndex > emptySessionIndex
+            ? activityText.substring(emptySessionIndex, nonEmptySessionIndex)
+            : ""
+        def startupSessionIndex = emptySessionBlock.indexOf("mTermuxTerminalSessionActivityClient.addNewSession(launchFailsafe, null);")
+        if (startupSessionIndex < 0) {
+            throw new GradleException("Ghostex Android startup gate could not find the empty-service addNewSession path.")
+        }
+        def guardedStartupSession = emptySessionBlock
+            .substring(Math.max(0, startupSessionIndex - 180), startupSessionIndex)
+            .contains("if (mGhostexAndroidController == null)")
+        if (!guardedStartupSession || !emptySessionBlock.contains("mGhostexAndroidController.onTermuxServiceConnected();")) {
+            throw new GradleException("Ghostex Android startup must not create a default local Termux shell while the Ghostex controller is active.")
+        }
+
+        def applicationFile = new File(projectDir, "src/main/java/com/termux/app/TermuxApplication.java")
+        def text = applicationFile.getText("UTF-8")
+        if (text.contains("TermuxAmSocketServer.setupTermuxAmSocketServer(context)")) {
+            throw new GradleException("Ghostex Android release runtime surface must not start termux-am socket server.")
+        }
+        if (!text.contains("TermuxAmSocketServer.disableForGhostexAndroid(context)")) {
+            throw new GradleException("Ghostex Android release runtime surface must explicitly disable termux-am socket server.")
+        }
+        def serviceFile = new File(projectDir, "src/main/java/com/termux/app/TermuxService.java")
+        def serviceText = serviceFile.getText("UTF-8")
+        if (serviceText.contains("SystemEventReceiver.registerPackageUpdateEvents(this)") ||
+            serviceText.contains("SystemEventReceiver.unregisterPackageUpdateEvents(this)")) {
+            throw new GradleException("Ghostex Android release runtime surface must not register stock Termux plugin package listeners.")
+        }
+        if (serviceText.contains("PermissionUtils.requestDisableBatteryOptimizations(this)") ||
+            serviceText.contains("ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS")) {
+            throw new GradleException("Ghostex Android Keep awake must not request battery optimization exemption.")
+        }
+        def controllerFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexAndroidController.java")
+        def controllerText = controllerFile.getText("UTF-8")
+        def onDestroyStart = controllerText.indexOf("public void onDestroy()")
+        def nextMethodStart = onDestroyStart < 0 ? -1 : controllerText.indexOf("public void notifyTermuxSessionsUpdated()", onDestroyStart)
+        if (onDestroyStart < 0 || nextMethodStart < 0 || !controllerText.substring(onDestroyStart, nextMethodStart).contains("sessionPasswords.clear();")) {
+            throw new GradleException("Ghostex Android controller teardown must clear session-only SSH passwords.")
+        }
+        if (!controllerText.contains("currentMachine.withSavePassword(false)") ||
+            !controllerText.contains("Failed to read SSH password")) {
+            throw new GradleException("Ghostex Android controller must disable saved-password mode after an unreadable vault entry.")
+        }
+        def passwordVaultFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexPasswordVault.java")
+        def passwordVaultText = passwordVaultFile.isFile() ? passwordVaultFile.getText("UTF-8") : ""
+        if (!passwordVaultText.contains("isStoredPasswordEnvelopeWellFormed") ||
+            !passwordVaultText.contains("preferences.edit().remove(key).apply();") ||
+            !passwordVaultText.contains("Saved SSH password envelope is malformed.")) {
+            throw new GradleException("Ghostex Android password vault must self-heal malformed or unreadable saved-password entries.")
+        }
+    }
+}
+
+task verifyGhostexReleaseNotificationSurface() {
+    doLast {
+        /*
+        CDXC:AndroidReleaseSurface 2026-05-17-16:54:
+        Foreground, crash, and retained plugin error notifications are release
+        surfaces. Their PendingIntents open fixed app-owned actions, so release
+        builds should fail if they regress to mutable or unspecified mutability
+        flags.
+        */
+        def violations = []
+        [
+            new File(projectDir, "src/main/java/com/termux/app/TermuxService.java"),
+            new File(rootDir, "termux-shared/src/main/java/com/termux/shared/termux/crash/TermuxCrashUtils.java"),
+            new File(rootDir, "termux-shared/src/main/java/com/termux/shared/termux/plugins/TermuxPluginUtils.java")
+        ].each { file ->
+            if (!file.isFile()) {
+                violations.add("missing notification source " + file)
+                return
+            }
+            def text = file.getText("UTF-8")
+            if (!text.contains("PendingIntent.FLAG_IMMUTABLE")) {
+                violations.add(file.name + ": notification PendingIntent paths must use FLAG_IMMUTABLE")
+            }
+            if (text.contains("PendingIntent.FLAG_MUTABLE")) {
+                violations.add(file.name + ": notification PendingIntent paths must not use FLAG_MUTABLE")
+            }
+            text.eachLine { line ->
+                if ((line.contains("PendingIntent.getActivity") ||
+                    line.contains("PendingIntent.getBroadcast") ||
+                    line.contains("PendingIntent.getService")) &&
+                    !line.contains("FLAG_IMMUTABLE") &&
+                    !line.contains("notificationPendingIntentFlags") &&
+                    !line.contains("reportPendingIntentFlags")) {
+                    violations.add(file.name + ": PendingIntent creator must use an immutable flag helper: " + line.trim())
+                }
+            }
+        }
+        if (!violations.isEmpty()) {
+            throw new GradleException("Ghostex Android notification surface is not release-ready: " + violations.join(", "))
+        }
+    }
+}
+
+task verifyGhostexReleaseDrawerSurface() {
+    doLast {
+        /*
+        CDXC:AndroidSidebar 2026-05-17-16:42:
+        The Android release surface is the Ghostex remote-session drawer, not
+        Termux's stock local-session list. Fail release builds if upstream syncs
+        remove the Ghostex controller, wire the stock drawer while Ghostex mode
+        is active, drop the Ghostex drawer include, or move keyboard control
+        back into the drawer instead of the floating terminal button.
+
+        CDXC:AndroidSidebar 2026-05-17-18:14:
+        The floating keyboard control is icon-only, so it needs an accessibility
+        label. Keep that in the release drawer gate because this button replaces
+        the labeled stock drawer keyboard action.
+
+        CDXC:AndroidSidebar 2026-05-17-18:26:
+        The floating keyboard button is always visible over the terminal. Keep
+        the release gate checking a 48dp-or-larger touch target so the control
+        stays usable on phones after layout edits.
+
+        CDXC:AndroidSidebar 2026-05-17-21:19:
+        Make the keyboard control a standard 56dp square floating button rather
+        than a short pill. It still satisfies the 48dp touch-target requirement
+        while reading as a persistent overlay affordance above the terminal.
+
+        CDXC:AndroidSidebar 2026-05-18-00:24:
+        The floating keyboard affordance should be visually quieter over remote
+        terminal content: keep it round, gray, 20% smaller than the previous
+        56dp overlay, and 10% opaque.
+
+        CDXC:AndroidSidebar 2026-05-17-16:12:
+        Action sheets carry Android's long-press replacement for macOS hover
+        controls. Keep their custom rows accessible by gating the composed
+        content-description path.
+
+        CDXC:AndroidRemoteSessions 2026-05-17-16:16:
+        Warm SSH attach terminals can survive Activity recreation in TermuxService.
+        Release builds must keep the command-label metadata and rehydration path
+        that prevents duplicate attach terminals after UI churn.
+
+        CDXC:AndroidRemoteSessions 2026-05-17-16:22:
+        Rehydration must protect the current visible attach terminal while
+        trimming overflow warm entries, preserving quick switching after Activity
+        recreation.
+
+        CDXC:AndroidConnectionManagement 2026-05-17-16:20:
+        Machine/setup panels are used on phone-width dialogs. Keep compact action
+        controls in wrapped two-column rows so labels remain readable.
+
+        CDXC:AndroidSidebar 2026-05-17-21:22:
+        Those custom panel controls are still tap targets. Gate the 48dp
+        minimum height so replacing native buttons with wrapped text rows does
+        not shrink machine-management actions below Android touch affordances.
+
+        CDXC:AndroidConnectionManagement 2026-05-18-02:58:
+        Saved-machine controls now live on the Machines drawer page instead of
+        the Sessions page header. Gate the page ids and machine actions so
+        keyboard/screen-reader users can switch, add, edit, or remove machines
+        without reopening a modal selector.
+
+        CDXC:AndroidConnectionManagement 2026-05-17-21:05:
+        Successful reconnects should refresh only the current machine record's
+        Last Connected timestamp. Gate the rebase helper so late SSH callbacks
+        cannot overwrite Settings edits made while reconnect was running.
+
+        CDXC:AndroidConnectionManagement 2026-05-17-21:07:
+        Multi-machine settings should allow separate SSH accounts but reject
+        accidental duplicate host/user/port targets. Gate both editor validation
+        and store enforcement so duplicate accounts cannot reach auto-reconnect.
+
+        CDXC:AndroidSidebar 2026-05-17-22:10:
+        The first-level drawer controls are the daily mobile navigation surface:
+        machine switching, Tailscale, setup, retry, and add-machine recovery.
+        Gate 48dp collapsed targets so the polished drawer does not regress to
+        cramped upstream-style button heights.
+
+        CDXC:AndroidSidebar 2026-05-17-20:05:
+        Primary Ghostex drawer copy should stay in Android resources so release
+        lint catches real layout problems instead of recurring hardcoded-text
+        warnings from the shipped drawer surface.
+
+        CDXC:AndroidSidebar 2026-05-17-20:51:
+        The drawer is the primary shipped Android surface. Gate every visible
+        text, hint, and content description in `view_ghostex_drawer.xml` through
+        resources so future copy edits stay localization-ready instead of only
+        checking the title row.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-20:24:
+        Target API 35 releases are edge-to-edge by default on Android 15. Keep
+        the Ghostex drawer/terminal release surface wired to a small inset
+        helper so system bars and display cutouts cannot cover sidebar controls,
+        terminal rows, or the floating keyboard button.
+
+        CDXC:AndroidSidebar 2026-05-17-17:40:
+        Drawer-driven dialogs are product UI for Ghostex Android. Keep settings,
+        onboarding, action sheets, details, confirmations, and credential panels
+        routed through the Ghostex dialog styler instead of raw AlertDialog
+        presentation.
+
+        CDXC:AndroidSidebar 2026-05-17-17:44:
+        Ghostex dialog titles belong inside styled content views. Do not use
+        AlertDialog platform title chrome for drawer workflows because it can
+        render a mismatched native band above the dark Ghostex panels.
+
+        CDXC:AndroidSidebar 2026-05-17-17:47:
+        In-content Ghostex titles must keep heading semantics for accessibility
+        now that platform dialog title chrome is gone.
+
+        CDXC:AndroidSidebar 2026-05-17-19:30:
+        The Ghostex drawer intentionally reuses a few upstream ids to keep the
+        Termux activity diff small. Release builds must prove the stock
+        settings and local-session button binders are skipped when the Ghostex
+        drawer is installed, so those ids never point at Termux local workflows.
+
+        CDXC:AndroidSidebar 2026-05-17-19:42:
+        The release drawer should look like Ghostex, not a stock Android list.
+        Gate the copied Ghostex session adapter's macOS-inspired palette,
+        rounded session cards, rounded badges, and active accent border so
+        future Termux syncs cannot flatten the primary mobile sidebar.
+
+        CDXC:AndroidConnectionManagement 2026-05-17-19:47:
+        The saved-machine switcher is the user's multi-account recovery path.
+        Gate rounded Ghostex spinner row surfaces beside the session-card visual
+        contract so account management stays visually integrated with the
+        remote-session drawer.
+
+        CDXC:AndroidSidebar 2026-05-17-20:03:
+        Mac sidebar inventory can expose fallback group metadata separately
+        from project metadata. Gate Android parsing of groupId/groupTitle so the
+        drawer preserves macOS grouping instead of degrading valid rows into
+        per-session Ungrouped buckets.
+        */
+        def violations = []
+
+        def activityFile = new File(projectDir, "src/main/java/com/termux/app/TermuxActivity.java")
+        def activityText = activityFile.getText("UTF-8")
+        if (!activityText.contains("mGhostexAndroidController = new GhostexAndroidController(this);")) {
+            violations.add(activityFile.name + ": GhostexAndroidController must be created during activity setup")
+        }
+        def serviceConnectedIndex = activityText.indexOf("public void onServiceConnected")
+        def serviceDisconnectedIndex = serviceConnectedIndex < 0 ? -1 : activityText.indexOf("public void onServiceDisconnected", serviceConnectedIndex)
+        def serviceConnectedBlock = serviceConnectedIndex >= 0 && serviceDisconnectedIndex > serviceConnectedIndex
+            ? activityText.substring(serviceConnectedIndex, serviceDisconnectedIndex)
+            : ""
+        if (!serviceConnectedBlock.contains("if (mGhostexAndroidController == null)") ||
+            !serviceConnectedBlock.contains("setTermuxSessionsListView();") ||
+            !serviceConnectedBlock.contains("mGhostexAndroidController.onTermuxServiceConnected();")) {
+            violations.add(activityFile.name + ": service binding must keep stock session-list wiring behind Ghostex-controller null checks")
+        }
+        if (!activityText.contains("private boolean isGhostexDrawerLayoutInstalled()") ||
+            !activityText.contains("findViewById(R.id.ghostex_open_tailscale_button) != null")) {
+            violations.add(activityFile.name + ": must detect the Ghostex drawer before wiring upstream drawer buttons")
+        }
+        def settingsBinderIndex = activityText.indexOf("private void setSettingsButtonView()")
+        def newSessionBinderIndex = activityText.indexOf("private void setNewSessionButtonView()")
+        def toggleKeyboardBinderIndex = activityText.indexOf("private void setToggleKeyboardView()")
+        def settingsBinderBlock = settingsBinderIndex >= 0 && newSessionBinderIndex > settingsBinderIndex
+            ? activityText.substring(settingsBinderIndex, newSessionBinderIndex)
+            : ""
+        def newSessionBinderBlock = newSessionBinderIndex >= 0 && toggleKeyboardBinderIndex > newSessionBinderIndex
+            ? activityText.substring(newSessionBinderIndex, toggleKeyboardBinderIndex)
+            : ""
+        if (!settingsBinderBlock.contains("if (isGhostexDrawerLayoutInstalled()) return;")) {
+            violations.add(activityFile.name + ": stock settings button binder must skip the Ghostex drawer")
+        }
+        if (!newSessionBinderBlock.contains("if (isGhostexDrawerLayoutInstalled()) return;") ||
+            !newSessionBinderBlock.contains("mTermuxTerminalSessionActivityClient.addNewSession(false, null)")) {
+            violations.add(activityFile.name + ": stock new-session button binder must skip the Ghostex drawer while preserving upstream local-session behavior")
+        }
+
+        def activityLayoutFile = new File(projectDir, "src/main/res/layout/activity_termux.xml")
+        def activityLayoutText = activityLayoutFile.getText("UTF-8")
+        if (!activityLayoutText.contains("<include layout=\"@layout/view_ghostex_drawer\"")) {
+            violations.add(activityLayoutFile.name + ": must include the Ghostex drawer layout")
+        }
+        if (!activityLayoutText.contains("android:id=\"@+id/ghostex_keyboard_fab\"")) {
+            violations.add(activityLayoutFile.name + ": must expose the floating keyboard button over the terminal surface")
+        }
+        def keyboardFabMatcher = activityLayoutText =~ /<com\.google\.android\.material\.button\.MaterialButton\b(?=[^>]*android:id="@\+id\/ghostex_keyboard_fab")[^>]*>/
+        if (!keyboardFabMatcher.find()) {
+            violations.add(activityLayoutFile.name + ": must keep the floating keyboard button as a MaterialButton")
+        } else {
+            def keyboardFabTag = keyboardFabMatcher.group(0)
+            if (!keyboardFabTag.contains("android:contentDescription=\"@string/action_toggle_soft_keyboard\"")) {
+                violations.add(activityLayoutFile.name + ": floating keyboard button must have an accessibility contentDescription")
+            }
+            if (!keyboardFabTag.contains("android:layout_width=\"45dp\"") ||
+                !keyboardFabTag.contains("android:layout_height=\"45dp\"") ||
+                !keyboardFabTag.contains("android:alpha=\"0.10\"")) {
+                violations.add(activityLayoutFile.name + ": floating keyboard button must remain 45dp and 10% opaque")
+            }
+        }
+        def upstreamDrawerMatcher = activityLayoutText =~ /<LinearLayout\b(?=[^>]*android:id="@\+id\/termux_upstream_drawer_template")[^>]*>/
+        if (!upstreamDrawerMatcher.find()) {
+            violations.add(activityLayoutFile.name + ": must keep the upstream drawer template only as a hidden sync reference")
+        } else {
+            def upstreamDrawerTag = upstreamDrawerMatcher.group(0)
+            if (!upstreamDrawerTag.contains("android:visibility=\"gone\"")) {
+                violations.add(activityLayoutFile.name + ": upstream Termux drawer template must stay hidden")
+            }
+        }
+
+        def ghostexDrawerFile = new File(projectDir, "src/main/res/layout/view_ghostex_drawer.xml")
+        def ghostexDrawerText = ghostexDrawerFile.getText("UTF-8")
+        [
+            "android:id=\"@+id/left_drawer\"",
+            "android:id=\"@+id/ghostex_sessions_page\"",
+            "android:id=\"@+id/ghostex_machines_page\"",
+            "android:id=\"@+id/ghostex_open_machines_page_button\"",
+            "android:id=\"@+id/ghostex_back_to_sessions_button\"",
+            "android:id=\"@+id/ghostex_machines_page_list\"",
+            "android:id=\"@+id/terminal_sessions_list\"",
+            "android:id=\"@+id/ghostex_open_tailscale_button\"",
+            "android:id=\"@+id/ghostex_prepare_phone_button\"",
+            "android:id=\"@+id/ghostex_retry_button\"",
+            "android:id=\"@+id/new_session_button\""
+        ].each { requiredSnippet ->
+            if (!ghostexDrawerText.contains(requiredSnippet)) {
+                violations.add(ghostexDrawerFile.name + ": missing " + requiredSnippet)
+            }
+        }
+        if (ghostexDrawerText.contains("toggle_keyboard_button")) {
+            violations.add(ghostexDrawerFile.name + ": keyboard toggle belongs in the floating terminal button, not the drawer")
+        }
+        if (!ghostexDrawerText.contains("android:text=\"@string/ghostex_drawer_title\"")) {
+            violations.add(ghostexDrawerFile.name + ": drawer title must use Ghostex Android branding resource")
+        }
+        def hardcodedDrawerCopy = ghostexDrawerText =~ /android:(text|hint|contentDescription)="(?!@string\/)([^"]+)"/
+        hardcodedDrawerCopy.each { match ->
+            violations.add(ghostexDrawerFile.name + ": android:" + match[1] + " must use a string resource instead of hardcoded copy `" + match[2] + "`")
+        }
+        def drawerTagForId = { String id ->
+            def matcher = ghostexDrawerText =~ /<[^>]+\b(?=[^>]*android:id="@\+id\/${java.util.regex.Pattern.quote(id)}")[^>]*>/
+            return matcher.find() ? matcher.group(0) : ""
+        }
+        [
+            "ghostex_open_machines_page_button",
+            "ghostex_back_to_sessions_button",
+            "ghostex_open_tailscale_button",
+            "ghostex_prepare_phone_button",
+            "ghostex_retry_button",
+            "new_session_button"
+        ].each { controlId ->
+            if (!drawerTagForId(controlId).contains("android:layout_height=\"48dp\"")) {
+                violations.add(ghostexDrawerFile.name + ": " + controlId + " must keep a 48dp drawer touch target")
+            }
+        }
+
+        def controllerFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexAndroidController.java")
+        def controllerText = controllerFile.getText("UTF-8")
+        if (!controllerText.contains("row.setContentDescription(GhostexAccessibilityCopy.join(action.label, action.detail") ||
+            !controllerText.contains("Destructive action. Tap to run.")) {
+            violations.add(controllerFile.name + ": action-sheet rows must keep composed accessibility descriptions")
+        }
+        if (!controllerText.contains("restoreWarmAttachSessionsFromService();") ||
+            !controllerText.contains("GhostexWarmSessionMetadata.buildAttachCommandLabel") ||
+            !controllerText.contains("GhostexWarmSessionMetadata.parseAttachCommandLabel")) {
+            violations.add(controllerFile.name + ": warm Ghostex attach sessions must be tagged and rehydrated from TermuxService")
+        }
+        if (!controllerText.contains("evictOverflowWarmSessionsProtecting") ||
+            !controllerText.contains("GhostexWarmSessionPolicy.overflowWarmSessionKeys")) {
+            violations.add(controllerFile.name + ": warm-session rehydration must protect the current attach terminal while trimming overflow")
+        }
+        if (!controllerText.contains("addTwoColumnActionRows") ||
+            !controllerText.contains("view.setMaxLines(2)") ||
+            !controllerText.contains("view.setMinHeight(dp(48))") ||
+            !controllerText.contains("checkBox.setMinHeight(dp(48))") ||
+            !controllerText.contains("view.setContentDescription(GhostexAccessibilityCopy.join(label, \"Tap to run.\"))")) {
+            violations.add(controllerFile.name + ": compact setup/machine buttons must stay readable and accessible on phones")
+        }
+        if (!controllerText.contains("showMachinesPage()") ||
+            !controllerText.contains("connectMachineFromMachinesPage") ||
+            !controllerText.contains("showMachineEditor(null);") ||
+            !controllerText.contains("confirmDeleteMachine(machine)") ||
+            !controllerText.contains("showMachineEditor(machine)")) {
+            violations.add(controllerFile.name + ": Machines drawer page must preserve machine switching, adding, editing, and removal paths")
+        }
+        if (!controllerText.contains("GhostexMachineManagementPolicy.connectedMachineRecord(") ||
+            !controllerText.contains("currentMatchingMachine(machine), System.currentTimeMillis()")) {
+            violations.add(controllerFile.name + ": reconnect success must rebase Last Connected writes on the current saved machine record")
+        }
+        if (!controllerText.contains("machineStore.findDuplicateSshTargetId(cleanHost, cleanUsername") ||
+            !controllerText.contains("This SSH target is already saved.")) {
+            violations.add(controllerFile.name + ": machine editor must reject duplicate SSH targets before saving")
+        }
+        if (!controllerText.contains("GhostexEdgeToEdgeInsets.applyToReleaseSurface(activity.findViewById(R.id.drawer_layout));")) {
+            violations.add(controllerFile.name + ": must apply Android 15 system-bar insets to the Ghostex drawer/terminal surface")
+        }
+        def machineStoreFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexMachineStore.java")
+        def machineStoreText = machineStoreFile.getText("UTF-8")
+        if (!machineStoreText.contains("findDuplicateSshTargetId") ||
+            !machineStoreText.contains("normalizeHostForDuplicateCheck") ||
+            !machineStoreText.contains("sshTargetKey(machine.host, machine.username, machine.port)") ||
+            !machineStoreText.contains("Duplicate Ghostex SSH target cannot be saved")) {
+            violations.add(machineStoreFile.name + ": saved-machine storage must enforce duplicate SSH target rejection")
+        }
+        def paletteFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexPalette.java")
+        def paletteText = paletteFile.isFile() ? paletteFile.getText("UTF-8") : ""
+        [
+            "public static final int BACKGROUND = 0xFF181818;",
+            "public static final int FOREGROUND = 0xFFFAFAFA;",
+            "public static final int CARD = 0xFF1F1F1F;",
+            "public static final int CARD_ACTIVE = 0xFF262626;",
+            "public static final int INPUT_BACKGROUND = 0xFF0E0E0E;",
+            "public static final int BUTTON = 0xFF7DD3FC;",
+            "public static final int STATUS_WORKING = 0xFFF59E0B;"
+        ].each { requiredSnippet ->
+            if (!paletteText.contains(requiredSnippet)) {
+                violations.add(paletteFile.name + ": missing shared Ghostex palette snippet " + requiredSnippet)
+            }
+        }
+        def colorsFile = new File(projectDir, "src/main/res/values/colors.xml")
+        def colorsText = colorsFile.isFile() ? colorsFile.getText("UTF-8") : ""
+        [
+            "<color name=\"ghostex_sidebar_background\">#181818</color>",
+            "<color name=\"ghostex_sidebar_foreground\">#FAFAFA</color>",
+            "<color name=\"ghostex_sidebar_input\">#0E0E0E</color>",
+            "<color name=\"ghostex_sidebar_button\">#262626</color>",
+            "<color name=\"ghostex_sidebar_primary\">#7DD3FC</color>"
+        ].each { requiredSnippet ->
+            if (!colorsText.contains(requiredSnippet)) {
+                violations.add(colorsFile.name + ": missing XML sidebar color resource " + requiredSnippet)
+            }
+        }
+        if (ghostexDrawerText.contains("#0B0F14") ||
+            ghostexDrawerText.contains("#121A25") ||
+            ghostexDrawerText.contains("#1A2432") ||
+            ghostexDrawerText.contains("#2D3748")) {
+            violations.add(ghostexDrawerFile.name + ": drawer XML must use shared neutral Ghostex sidebar colors instead of stale blue-slate literals")
+        }
+        if (!controllerText.contains("GHOSTEX_BG = GhostexPalette.BACKGROUND") ||
+            !controllerText.contains("GHOSTEX_PANEL = GhostexPalette.CARD") ||
+            !controllerText.contains("GHOSTEX_ACCENT = GhostexPalette.BUTTON")) {
+            violations.add(controllerFile.name + ": drawer dialogs and panels must consume the shared Ghostex palette")
+        }
+        def remoteSessionAdapterFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexRemoteSessionAdapter.java")
+        def remoteSessionAdapterText = remoteSessionAdapterFile.isFile() ? remoteSessionAdapterFile.getText("UTF-8") : ""
+        [
+            "GhostexPalette.FOREGROUND",
+            "GhostexPalette.CARD_ACTIVE",
+            "GhostexPalette.STATUS_WORKING",
+            "private GradientDrawable sessionBackground",
+            "private GradientDrawable badgeBackground",
+            "drawable.setStroke(dp(context, 1), active ? GhostexPalette.BUTTON : GhostexPalette.BORDER);"
+        ].each { requiredSnippet ->
+            if (!remoteSessionAdapterText.contains(requiredSnippet)) {
+                violations.add(remoteSessionAdapterFile.name + ": missing Ghostex sidebar visual contract snippet " + requiredSnippet)
+            }
+        }
+        def remoteSessionFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexRemoteSession.java")
+        def remoteSessionText = remoteSessionFile.isFile() ? remoteSessionFile.getText("UTF-8") : ""
+        if (!remoteSessionText.contains("trimmedJsonValue(json, \"groupId\")") ||
+            !remoteSessionText.contains("trimmedJsonValue(json, \"groupTitle\")")) {
+            violations.add(remoteSessionFile.name + ": remote session parsing must fall back to Mac sidebar groupId/groupTitle metadata")
+        }
+        if (!controllerText.contains("GhostexDialogStyler.show(") ||
+            controllerText.contains("dialog.show();") ||
+            controllerText.contains(".show();") ||
+            controllerText.contains(".setTitle(")) {
+            violations.add(controllerFile.name + ": Ghostex dialogs must use GhostexDialogStyler and styled in-content titles instead of raw AlertDialog chrome")
+        }
+        def dialogStylerFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexDialogStyler.java")
+        def dialogStylerText = dialogStylerFile.isFile() ? dialogStylerFile.getText("UTF-8") : ""
+        if (!dialogStylerText.contains("public final class GhostexDialogStyler") ||
+            !dialogStylerText.contains("styleButton(dialog.getButton(AlertDialog.BUTTON_POSITIVE)") ||
+            !dialogStylerText.contains("window.setBackgroundDrawable") ||
+            !dialogStylerText.contains("showDestructive")) {
+            violations.add(dialogStylerFile.name + ": must centralize Ghostex AlertDialog styling and destructive action colors")
+        }
+        def textSemanticsFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexTextSemantics.java")
+        def textSemanticsText = textSemanticsFile.isFile() ? textSemanticsFile.getText("UTF-8") : ""
+        if (!controllerText.contains("GhostexTextSemantics.markHeading(view)") ||
+            !textSemanticsText.contains("ViewCompat.setAccessibilityHeading(view, true)")) {
+            violations.add("Ghostex panel titles must be marked as accessibility headings")
+        }
+        def insetsFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexEdgeToEdgeInsets.java")
+        def insetsText = insetsFile.isFile() ? insetsFile.getText("UTF-8") : ""
+        if (!insetsText.contains("Build.VERSION.SDK_INT < 35") ||
+            !insetsText.contains("WindowInsetsCompat.Type.systemBars()") ||
+            !insetsText.contains("WindowInsetsCompat.Type.displayCutout()") ||
+            !insetsText.contains("ViewCompat.requestApplyInsets(releaseSurface)")) {
+            violations.add(insetsFile.name + ": must handle Android 15 system bars and display cutouts without changing older release layout")
+        }
+
+        if (!violations.isEmpty()) {
+            throw new GradleException("Ghostex Android drawer surface is not release-ready: " + violations.join(", "))
+        }
+    }
+}
+
+task verifyGhostexReleaseVersionIdentity() {
+    doLast {
+        /*
+        CDXC:AndroidBranding 2026-05-17-15:08:
+        Ghostex Android has its own side-by-side package and visible version
+        metadata. Fail release builds that fall back to the upstream Termux
+        version string.
+
+        CDXC:AndroidBranding 2026-05-17-16:25:
+        Release APK/AAB output names should include Ghostex version name and
+        code by default so install-test and publish artifacts stay traceable
+        outside Gradle metadata.
+
+        CDXC:AndroidBranding 2026-05-17-22:38:
+        The released launcher identity must say Ghostex Android. Gate the
+        manifest placeholder, application label resource, and source manifest
+        wiring so upstream Termux branding cannot return silently.
+
+        CDXC:AndroidBranding 2026-05-17-20:17:
+        Launcher artwork is part of release identity. Gate the adaptive
+        foreground vector plus legacy PNG generator/output so modern and
+        pre-adaptive Android launchers both show the same neutral Ghostex mark.
+        */
+        if (android.defaultConfig.versionName == "0.118.0") {
+            throw new GradleException("Ghostex Android release versionName must not default to upstream Termux 0.118.0. Set GHOSTEX_ANDROID_VERSION_NAME for distribution builds.")
+        }
+        if (android.defaultConfig.versionCode <= 0) {
+            throw new GradleException("Ghostex Android release versionCode must be positive.")
+        }
+        def expectedDefaultTag = ghostexAndroidApkOutputTag(project.ext.packageVariant, "release",
+            android.defaultConfig.versionName, android.defaultConfig.versionCode)
+        def buildText = new File(projectDir, "build.gradle").getText("UTF-8")
+        if (!buildText.contains("ghostexAndroidApkOutputTag") ||
+            !buildText.contains("copyGhostexReleaseBundle") ||
+            !buildText.contains("finalizedBy copyGhostexReleaseBundle") ||
+            !expectedDefaultTag.startsWith("v") ||
+            !expectedDefaultTag.contains("+" + android.defaultConfig.versionCode + "-")) {
+            throw new GradleException("Ghostex Android release APK/AAB output tag must include versionName and versionCode by default.")
+        }
+        def stringsText = new File(projectDir, "src/main/res/values/strings.xml").getText("UTF-8")
+        def manifestText = new File(projectDir, "src/main/AndroidManifest.xml").getText("UTF-8")
+        if (!buildText.contains("manifestPlaceholders.TERMUX_APP_NAME = \"Ghostex Android\"") ||
+            !stringsText.contains("<!ENTITY TERMUX_APP_NAME \"Ghostex Android\">") ||
+            !stringsText.contains("<string name=\"application_name\">&TERMUX_APP_NAME;</string>") ||
+            !manifestText.contains("android:label=\"@string/application_name\"")) {
+            throw new GradleException("Ghostex Android release launcher label must stay wired to Ghostex Android branding.")
+        }
+        def violations = []
+        def foreground = new File(projectDir, "src/main/res/drawable/ic_foreground.xml")
+        def foregroundText = foreground.isFile() ? foreground.getText("UTF-8") : ""
+        ["#1F1F1F", "#7DD3FC", "#FAFAFA", "#F59E0B"].each { required ->
+            if (!foregroundText.contains(required)) {
+                violations.add("ic_foreground.xml missing neutral Ghostex launcher color " + required)
+            }
+        }
+        ["#101820", "#21D19F", "#F3F6FA"].each { stale ->
+            if (foregroundText.contains(stale)) {
+                violations.add("ic_foreground.xml still contains stale launcher color " + stale)
+            }
+        }
+        def launcherGenerator = new File(rootDir, "tools/generate-ghostex-launcher-icons.swift")
+        def launcherGeneratorText = launcherGenerator.isFile() ? launcherGenerator.getText("UTF-8") : ""
+        if (!launcherGeneratorText.contains("Legacy launcher PNGs are still used below Android 8") ||
+            !launcherGeneratorText.contains("static let bg = color(0x181818)") ||
+            !launcherGeneratorText.contains("static let accent = color(0x7dd3fc)") ||
+            !launcherGeneratorText.contains("static let working = color(0xf59e0b)")) {
+            violations.add("tools/generate-ghostex-launcher-icons.swift must generate neutral Ghostex legacy launcher PNGs")
+        }
+        [
+            ["mipmap-mdpi", 48],
+            ["mipmap-hdpi", 72],
+            ["mipmap-xhdpi", 96],
+            ["mipmap-xxhdpi", 144],
+            ["mipmap-xxxhdpi", 192]
+        ].each { density ->
+            ["ic_launcher.png", "ic_launcher_round.png"].each { name ->
+                def icon = new File(projectDir, "src/main/res/${density[0]}/${name}")
+                validateImage(icon, density[1] as int, density[1] as int,
+                    "${density[0]}/${name}", violations)
+                validateApproxImagePixel(icon, ((density[1] as int) / 2) as int, 2,
+                    0x18, 0x18, 0x18, 10,
+                    "${density[0]}/${name} neutral launcher background", violations)
+            }
+        }
+        if (!violations.isEmpty()) {
+            throw new GradleException("Ghostex Android launcher identity is not release-ready: " + violations.join(", "))
+        }
+    }
+}
+
+task verifyGhostexRemoteSessionInputSurface() {
+    doLast {
+        /*
+        CDXC:AndroidRemoteSessions 2026-05-17-15:06:
+        Ghostex Android should not let terminal long-press menus or hardware
+        shortcuts reopen stock Termux local-session management. Keep this
+        source gate near the release surface checks so upstream syncs cannot
+        silently restore create/switch/rename/kill/settings shortcuts outside
+        the Ghostex drawer.
+        */
+        def violations = []
+
+        def terminalViewClient = new File(projectDir, "src/main/java/com/termux/app/terminal/TermuxTerminalViewClient.java")
+        def terminalViewText = terminalViewClient.getText("UTF-8")
+        [
+            "ACTION_SHORTCUT_CREATE_SESSION",
+            "ACTION_SHORTCUT_NEXT_SESSION",
+            "ACTION_SHORTCUT_PREVIOUS_SESSION",
+            "ACTION_SHORTCUT_RENAME_SESSION"
+        ].each { actionName ->
+            def actionIndex = terminalViewText.indexOf(actionName)
+            if (actionIndex < 0) {
+                violations.add(terminalViewClient.name + ": missing shortcut action " + actionName)
+            } else {
+                def block = terminalViewText.substring(actionIndex, Math.min(terminalViewText.length(), actionIndex + 420))
+                if (!block.contains("mActivity.isGhostexAndroidMode()") || !block.contains("mActivity.getDrawer().openDrawer(Gravity.LEFT)") || !block.contains("return true;")) {
+                    violations.add(terminalViewClient.name + ": " + actionName + " must redirect to the Ghostex drawer in Ghostex mode")
+                }
+            }
+        }
+        [
+            "unicodeChar == 'n'",
+            "unicodeChar == 'p'",
+            "unicodeChar == 'r'",
+            "unicodeChar == 'c'",
+            "unicodeChar >= '1'"
+        ].each { shortcutPattern ->
+            def actionIndex = terminalViewText.indexOf(shortcutPattern)
+            if (actionIndex < 0) {
+                violations.add(terminalViewClient.name + ": missing hardware shortcut pattern " + shortcutPattern)
+            } else {
+                def block = terminalViewText.substring(actionIndex, Math.min(terminalViewText.length(), actionIndex + 520))
+                if (!block.contains("ghostexMode") || !block.contains("mActivity.getDrawer().openDrawer(Gravity.LEFT)") || !block.contains("return true;")) {
+                    violations.add(terminalViewClient.name + ": " + shortcutPattern + " must redirect to the Ghostex drawer in Ghostex mode")
+                }
+            }
+        }
+
+        def activityFile = new File(projectDir, "src/main/java/com/termux/app/TermuxActivity.java")
+        def activityText = activityFile.getText("UTF-8")
+        def contextMenuMethodIndex = activityText.indexOf("public void onCreateContextMenu")
+        def contextMenuMethodEndIndex = activityText.indexOf("/** Hook system menu to show context menu instead. */", contextMenuMethodIndex)
+        def contextMenuText = contextMenuMethodIndex >= 0 && contextMenuMethodEndIndex > contextMenuMethodIndex
+            ? activityText.substring(contextMenuMethodIndex, contextMenuMethodEndIndex)
+            : ""
+        def ghostexMenuIndex = contextMenuText.indexOf("if (mGhostexAndroidController != null)")
+        def stockMenuIndex = contextMenuText.indexOf("CONTEXT_MENU_RESET_TERMINAL_ID")
+        if (ghostexMenuIndex < 0 || stockMenuIndex < 0 || ghostexMenuIndex > stockMenuIndex) {
+            violations.add(activityFile.name + ": Ghostex context-menu branch must run before stock Termux terminal actions")
+        } else {
+            def ghostexMenuBlock = contextMenuText.substring(ghostexMenuIndex, stockMenuIndex)
+            [
+                "CONTEXT_MENU_RESET_TERMINAL_ID",
+                "CONTEXT_MENU_KILL_PROCESS_ID",
+                "CONTEXT_MENU_STYLING_ID",
+                "CONTEXT_MENU_HELP_ID",
+                "CONTEXT_MENU_SETTINGS_ID",
+                "CONTEXT_MENU_REPORT_ID"
+            ].each { forbiddenItem ->
+                if (ghostexMenuBlock.contains(forbiddenItem)) {
+                    violations.add(activityFile.name + ": Ghostex terminal context menu must not expose " + forbiddenItem)
+                }
+            }
+        }
+
+        if (!violations.isEmpty()) {
+            throw new GradleException("Ghostex Android remote-session input surface is not locked down: " + violations.join(", "))
+        }
+    }
+}
+
+task verifyGhostexReleaseEntryPoints() {
+    dependsOn "processReleaseManifestForPackage"
+    doLast {
+        /*
+        CDXC:AndroidReleaseSurface 2026-05-17-14:49:
+        Ghostex Android should ship only the launcher and foreground terminal
+        service surfaces needed for the remote SSH/ZMX app. Keep a release gate
+        over merged manifest entry points so upstream Termux syncs cannot
+        silently re-export file receivers, document providers, IoT launch,
+        run-command service, settings, or boot-style surfaces.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-14:49:
+        Stock Termux launcher shortcuts are kept as disabled upstream markers.
+        Release builds should fail if a shortcut becomes enabled because those
+        shortcuts create local Termux sessions instead of opening Ghostex's
+        reconnect/session overlay.
+        */
+        def manifestRoots = [
+            new File(buildDir, "intermediates/merged_manifest/release"),
+            new File(buildDir, "intermediates/merged_manifests/release"),
+            new File(buildDir, "intermediates/packaged_manifests/release")
+        ]
+        def manifests = []
+        manifestRoots.each { root ->
+            if (root.exists()) {
+                root.eachFileRecurse { file ->
+                    if (file.name == "AndroidManifest.xml") manifests.add(file)
+                }
+            }
+        }
+        if (manifests.isEmpty()) {
+            throw new GradleException("No merged release manifests found under " + manifestRoots.join(", "))
+        }
+
+        def disabledComponents = [
+            ".HomeActivity",
+            ".app.api.file.FileShareReceiverActivity",
+            ".app.api.file.FileViewReceiverActivity",
+            ".filepicker.TermuxDocumentsProvider",
+            '.app.TermuxOpenReceiver$ContentProvider',
+            ".app.event.SystemEventReceiver",
+            ".app.RunCommandService",
+            ".app.activities.SettingsActivity"
+        ]
+        def nonExportedComponents = disabledComponents + [".app.api.file.FileReceiverActivity"]
+        def violations = []
+        manifests.each { manifest ->
+            def text = manifest.getText("UTF-8")
+            disabledComponents.each { name ->
+                def tag = findManifestTagForComponent(text, name)
+                if (tag == null) {
+                    violations.add(manifest.name + ": missing component " + name)
+                } else if (!hasAndroidAttribute(tag, "enabled", "false")) {
+                    violations.add(manifest.name + ": " + name + " must be android:enabled=\"false\"")
+                }
+            }
+            nonExportedComponents.each { name ->
+                def tag = findManifestTagForComponent(text, name)
+                if (tag == null) {
+                    violations.add(manifest.name + ": missing component " + name)
+                } else if (!hasAndroidAttribute(tag, "exported", "false")) {
+                    violations.add(manifest.name + ": " + name + " must be android:exported=\"false\"")
+                }
+            }
+        }
+
+        def shortcutsFile = new File(projectDir, "src/main/res/xml/shortcuts.xml")
+        def shortcutsText = shortcutsFile.getText("UTF-8")
+        def shortcutMatcher = shortcutsText =~ /<shortcut\b[\s\S]*?<\/shortcut>/
+        shortcutMatcher.each { match ->
+            def block = match instanceof List ? match[0] : match
+            def idMatcher = block =~ /android:shortcutId="([^"]+)"/
+            def shortcutId = idMatcher.find() ? idMatcher.group(1) : "unknown"
+            if (!hasAndroidAttribute(block, "enabled", "false")) {
+                violations.add("shortcuts.xml: " + shortcutId + " must be android:enabled=\"false\"")
+            }
+        }
+
+        if (!violations.isEmpty()) {
+            throw new GradleException("Ghostex Android release entry points are not locked down: " + violations.join(", "))
+        }
+    }
+}
+
+task verifyGhostexReleaseSigning() {
+    doLast {
+        /*
+        CDXC:AndroidReleaseSurface 2026-05-17-15:02:
+        Local release builds may stay unsigned for verification, but a
+        publishable build must opt into signing and must not use Termux's
+        checked-in shared test key. CI should set
+        GHOSTEX_ANDROID_REQUIRE_RELEASE_SIGNING=1 for distribution jobs.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-15:04:
+        The configured release keystore must exist outside this Android
+        checkout. This keeps publish signing material out of git and prevents a
+        relative in-repo path from becoming the accidental distribution key.
+        */
+        def signingConfig = android.buildTypes.release.signingConfig
+        if (signingConfig == null) {
+            if (isGhostexAndroidReleaseSigningRequired(project)) {
+                throw new GradleException("Ghostex Android publish release requires signing. Set GHOSTEX_ANDROID_SIGNING_STORE_FILE, GHOSTEX_ANDROID_SIGNING_STORE_PASSWORD, GHOSTEX_ANDROID_SIGNING_KEY_ALIAS, and GHOSTEX_ANDROID_SIGNING_KEY_PASSWORD.")
+            }
+            return
+        }
+        def storeFileName = signingConfig.storeFile == null ? "" : signingConfig.storeFile.name
+        if (signingConfig.name == "debug" || storeFileName == "testkey_untrusted.jks") {
+            throw new GradleException("Ghostex Android release builds must not be signed with the upstream Termux shared test key.")
+        }
+        if (signingConfig.storeFile == null || !signingConfig.storeFile.isFile()) {
+            throw new GradleException("Ghostex Android release signing keystore does not exist: " + signingConfig.storeFile)
+        }
+        def storePath = signingConfig.storeFile.canonicalFile.toPath()
+        def checkoutPath = rootDir.canonicalFile.toPath()
+        if (storePath.startsWith(checkoutPath)) {
+            throw new GradleException("Ghostex Android release signing keystore must live outside the Android checkout: " + signingConfig.storeFile)
+        }
+    }
+}
+
+task verifyGhostexReleaseRemoteCliContract() {
+    doLast {
+        /*
+        CDXC:AndroidConnectionManagement 2026-05-17-18:20:
+        Android's release readiness path depends on the Mac-side
+        `ghostex android-check --json` command, not a generic session-list probe.
+        Keep this gate near the other release surface checks so future Termux
+        upstream syncs cannot silently regress Check connection to a weaker
+        SSH/CLI test or lose the recovery copy for older Mac CLIs.
+
+        CDXC:AndroidConnectionRecovery 2026-05-17-19:07:
+        Timeout copy does not pass through stderr summarization, so gate the
+        shared timeout helper and tests alongside the remote CLI contract. This
+        prevents reconnect, Check connection, rename, or session action timeouts
+        from regressing to terse non-actionable strings.
+        */
+        def violations = []
+        def commandBuilder = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexSshCommandBuilder.java")
+        def inventoryClient = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexSessionInventoryClient.java")
+        def timeoutCopy = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexRemoteTimeoutCopy.java")
+        def commandBuilderTest = new File(projectDir, "src/test/java/com/termux/app/ghostex/GhostexSshCommandBuilderTest.java")
+        def inventoryClientTest = new File(projectDir, "src/test/java/com/termux/app/ghostex/GhostexSessionInventoryClientTest.java")
+        def timeoutCopyTest = new File(projectDir, "src/test/java/com/termux/app/ghostex/GhostexRemoteTimeoutCopyTest.java")
+
+        if (!commandBuilder.isFile() || !commandBuilder.getText("UTF-8").contains("ghostex android-check --json")) {
+            violations.add("GhostexSshCommandBuilder must use ghostex android-check --json for Check connection")
+        }
+        if (commandBuilder.isFile() && commandBuilder.getText("UTF-8").contains("ghostex sessions --json >/dev/null")) {
+            violations.add("Check connection must not fall back to generic ghostex sessions --json redirection")
+        }
+        if (!inventoryClient.isFile() ||
+            !inventoryClient.getText("UTF-8").contains("unknown command: android-check") ||
+            !inventoryClient.getText("UTF-8").contains("Session persistence is not set to zmx")) {
+            violations.add("GhostexSessionInventoryClient must summarize android-check update and zmx-setting failures")
+        }
+        if (!timeoutCopy.isFile() ||
+            !timeoutCopy.getText("UTF-8").contains("Open Tailscale") ||
+            !timeoutCopy.getText("UTF-8").contains("retry")) {
+            violations.add("GhostexRemoteTimeoutCopy must keep SSH timeout recovery actionable")
+        }
+        if (!inventoryClient.isFile() ||
+            !inventoryClient.getText("UTF-8").contains("GhostexRemoteTimeoutCopy.connecting") ||
+            !inventoryClient.getText("UTF-8").contains("GhostexRemoteTimeoutCopy.sessionAction") ||
+            !inventoryClient.getText("UTF-8").contains("GhostexRemoteTimeoutCopy.renaming") ||
+            !inventoryClient.getText("UTF-8").contains("GhostexRemoteTimeoutCopy.checking")) {
+            violations.add("GhostexSessionInventoryClient must use GhostexRemoteTimeoutCopy for all timeout paths")
+        }
+        if (!commandBuilderTest.isFile() || !commandBuilderTest.getText("UTF-8").contains("ghostex android-check --json")) {
+            violations.add("GhostexSshCommandBuilderTest must cover the Android readiness command")
+        }
+        if (!inventoryClientTest.isFile() ||
+            !inventoryClientTest.getText("UTF-8").contains("summarizesMissingAndroidCheckCommand") ||
+            !inventoryClientTest.getText("UTF-8").contains("summarizesNonZmxPersistenceFromAndroidCheckJson")) {
+            violations.add("GhostexSessionInventoryClientTest must cover android-check recovery copy")
+        }
+        if (!timeoutCopyTest.isFile() || !timeoutCopyTest.getText("UTF-8").contains("timeoutCopyMentionsTailscaleRetryAndInterruptedIntent")) {
+            violations.add("GhostexRemoteTimeoutCopyTest must cover timeout recovery copy")
+        }
+
+        if (!violations.isEmpty()) {
+            throw new GradleException("Ghostex Android remote CLI contract is not release-ready: " + violations.join(", "))
+        }
+    }
+}
+
+task verifyGhostexReleaseE2EHarness() {
+    doLast {
+        /*
+        CDXC:AndroidReleaseE2E 2026-05-17-16:30:
+        The final Android app requires a live phone-to-Tailscale-to-macOS
+        Ghostex/zmx verification before release. Keep the host-side runner and
+        device instrumentation test present so release QA has a repeatable path
+        for proving the real network/session contract outside source-only gates.
+
+        CDXC:AndroidReleaseE2E 2026-05-17-17:35:
+        Device verification should not depend on the developer shell already
+        exporting platform-tools on PATH. Keep shared adb discovery available
+        so QA can point the harness at PATH, Android SDK env vars, common SDK
+        locations, or GHOSTEX_ANDROID_ADB.
+
+        CDXC:AndroidReleaseE2E 2026-05-17-18:39:
+        Live E2E may need an SSH password, but the release harness must not
+        pass it as a Gradle or instrumentation command-line argument. Keep the
+        password streamed from the QA shell environment into debug app private
+        storage and cleaned after use, without passing through host temp files
+        or shared device temp paths.
+
+        CDXC:AndroidReleaseE2E 2026-05-17-18:52:
+        The instrumentation test should delete the private E2E password file
+        immediately after first read, including read-failure paths, and cache it
+        only in the test process, so device-side cleanup does not depend solely
+        on host-side trap execution.
+
+        CDXC:AndroidReleaseE2E 2026-05-17-22:24:
+        Long generated QA passwords must survive staging intact. Gate the
+        instrumentation test's EOF read loop so a future refactor cannot go
+        back to a single partial FileInputStream read before deleting the file.
+
+        CDXC:AndroidReleaseE2E 2026-05-17-19:22:
+        Live E2E installs a debug runtime plus instrumentation APK before
+        signed-release UI smoke. Require explicit data-clear confirmation and
+        uninstall app/test packages first so an existing release or Termux
+        install cannot block debug proof with signature mismatch.
+
+        CDXC:AndroidReleaseE2E 2026-05-17-19:34:
+        The disposable-device uninstall also removes phone-side packages. Keep
+        the live harness waiting for the fresh Termux bootstrap and installing
+        OpenSSH/sshpass before instrumentation, otherwise final proof depends on
+        impossible preinstalled tools in deleted app data.
+        */
+        def violations = []
+        def runner = new File(rootDir, "tools/ghostex-android-device-e2e.sh")
+        def adbHelper = new File(rootDir, "tools/ghostex-android-adb.sh")
+        def testFile = new File(projectDir, "src/androidTest/java/com/termux/app/ghostex/GhostexDeviceE2ETest.java")
+        if (!runner.isFile() || !runner.getText("UTF-8").contains("GHOSTEX_ANDROID_HOST")) {
+            violations.add("missing tools/ghostex-android-device-e2e.sh with target-machine arguments")
+        } else {
+            def runnerText = runner.getText("UTF-8")
+            ["ghostex-android-adb.sh", "resolve_ghostex_android_adb", "GHOSTEX_ANDROID_ADB", "ghostex_android_package_name", "run-as \"$runtime_package\"", "cat > files/ghostex-e2e/password", "files/ghostex-e2e/password", "cleanup_password_files", "GHOSTEX_ANDROID_CONFIRM_CLEAR_DATA", "require_ghostex_android_data_clear_confirmation", "adb_cmd uninstall \"$runtime_package\"", "adb_cmd uninstall \"$test_package\"", "wait_for_termux_bootstrap", "files/usr/bin/pkg", "install_phone_ssh_tools", "pkg install -y openssh sshpass", "command -v ssh && command -v sshpass"].each { required ->
+                if (!runnerText.contains(required)) violations.add("ghostex-android-device-e2e.sh missing adb discovery hook " + required)
+            }
+            if (runnerText.contains('ghostexPassword=$GHOSTEX_ANDROID_PASSWORD') ||
+                runnerText.contains("InstrumentationRunnerArguments.ghostexPassword")) {
+                violations.add("ghostex-android-device-e2e.sh must not pass SSH passwords as Gradle instrumentation arguments")
+            }
+            if (runnerText.contains("/data/local/tmp") || runnerText.contains("adb_cmd push")) {
+                violations.add("ghostex-android-device-e2e.sh must not stage SSH passwords through shared device temp files")
+            }
+            if (runnerText.contains("mktemp") || runnerText.contains("local_password_file")) {
+                violations.add("ghostex-android-device-e2e.sh must not stage SSH passwords through host temp files")
+            }
+        }
+        if (!adbHelper.isFile()) {
+            violations.add("missing tools/ghostex-android-adb.sh")
+        } else {
+            def helperText = adbHelper.getText("UTF-8")
+            ["GHOSTEX_ANDROID_ADB", "ANDROID_HOME", "ANDROID_SDK_ROOT", "platform-tools/adb", "require_ghostex_android_device", "require_ghostex_android_data_clear_confirmation"].each { required ->
+                if (!helperText.contains(required)) violations.add("ghostex-android-adb.sh missing " + required)
+            }
+        }
+        if (!testFile.isFile() ||
+            !testFile.getText("UTF-8").contains("remoteMachinePassesGhostexZmxReadinessCheck") ||
+            !testFile.getText("UTF-8").contains("remoteInventoryReturnsZmxSessionsAndStableActionsWork") ||
+            !testFile.getText("UTF-8").contains("remoteAttachCommandUsesStableSessionId") ||
+            !testFile.getText("UTF-8").contains("readPasswordFile") ||
+            !testFile.getText("UTF-8").contains("ghostex-e2e") ||
+            !testFile.getText("UTF-8").contains("cachedPassword") ||
+            !testFile.getText("UTF-8").contains("ByteArrayOutputStream") ||
+            !testFile.getText("UTF-8").contains("while ((read = input.read(buffer)) != -1)") ||
+            !testFile.getText("UTF-8").contains("file.delete()") ||
+            !testFile.getText("UTF-8").contains("finally") ||
+            !testFile.getText("UTF-8").contains("addSuppressed")) {
+            violations.add("missing GhostexDeviceE2ETest readiness and live inventory/action checks")
+        }
+        if (testFile.isFile() && testFile.getText("UTF-8").contains("value(args, \"ghostexPassword\")")) {
+            violations.add("GhostexDeviceE2ETest must read optional SSH passwords from private E2E storage, not instrumentation arguments")
+        }
+        if (!violations.isEmpty()) {
+            throw new GradleException("Ghostex Android release E2E harness is incomplete: " + violations.join(", "))
+        }
+    }
+}
+
+task verifyGhostexReleaseUiSmokeHarness() {
+    doLast {
+        /*
+        CDXC:AndroidOnboarding 2026-05-17-16:59:
+        The release app needs a repeatable device smoke check for the first-run
+        tutorial and Add Machine handoff. Keep the host-side script present so
+        release QA can verify onboarding UX on an emulator without a live Mac.
+
+        CDXC:AndroidReleaseE2E 2026-05-17-17:35:
+        The first-run UI smoke path uses the same adb discovery helper as the
+        live Tailscale E2E path so both release checks run from standard Android
+        SDK installs without bespoke PATH setup.
+
+        CDXC:AndroidReleaseE2E 2026-05-17-18:24:
+        The first-run UI smoke path clears Ghostex Android data to simulate a
+        fresh install, so the release script must require an explicit opt-in
+        before it can mutate a selected device.
+
+        CDXC:AndroidOnboarding 2026-05-17-19:11:
+        First-run onboarding must not be marked complete before a saved SSH
+        machine exists. Gate the completion policy and tests here so release
+        builds keep routing fresh installs from tutorial into machine setup.
+
+        CDXC:AndroidReleaseE2E 2026-05-17-19:15:
+        The first-run UI smoke script should test the release candidate APK
+        when available or explicitly provided, with debug APKs reserved for
+        standalone development smoke. Gate that selection logic so final
+        release proof does not silently test the wrong install artifact.
+
+        CDXC:AndroidReleaseE2E 2026-05-17-19:17:
+        UI smoke APK selection returns its path through stdout. Gradle build
+        logs must be redirected to stderr inside select_apk so adb install gets
+        one clean APK path instead of command-substitution noise.
+
+        CDXC:AndroidReleaseE2E 2026-05-17-19:20:
+        Final release proof runs debug instrumentation before release UI smoke.
+        The smoke script must uninstall the runtime and test packages after the
+        explicit data-clear confirmation so a debug signature cannot block the
+        signed release APK install.
+
+        CDXC:AndroidConnectionManagement 2026-05-17-19:53:
+        First-run UI smoke should cover the saved-machine manager that powers
+        automatic reconnect and multi-account switching. Gate the disposable
+        loopback-machine path so release QA proves settings cards and machine
+        action sheets without depending on a live Mac.
+
+        CDXC:AndroidConnectionRecovery 2026-05-17-19:56:
+        Automatic reconnect is only useful when failed reconnects lead to an
+        understandable repair path. Gate the UI smoke's post-restart recovery
+        check and Setup-panel screenshot so release QA proves that path on a
+        clean disposable device.
+        */
+        def runner = new File(rootDir, "tools/ghostex-android-ui-smoke.sh")
+        def controller = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexAndroidController.java")
+        def completionPolicy = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexOnboardingCompletionPolicy.java")
+        def completionPolicyTest = new File(projectDir, "src/test/java/com/termux/app/ghostex/GhostexOnboardingCompletionPolicyTest.java")
+        def violations = []
+        if (!runner.isFile()) {
+            violations.add("missing tools/ghostex-android-ui-smoke.sh")
+        } else {
+            def text = runner.getText("UTF-8")
+            [
+                "uiautomator dump",
+                "Set up Ghostex Android",
+                "Connect to your running Ghostex sessions",
+                "command -v ghostex",
+                "Session persistence to zmx",
+                "Tap Retry or reopen the app.",
+                "Add a Mac or workstation",
+                "Canceling Add Machine before saving keeps the first-run tutorial active",
+                "could not cancel the Add Machine editor",
+                "05-cancel-keeps-first-run-tutorial",
+                "GHOSTEX_ANDROID_UI_SMOKE_APK",
+                "GHOSTEX_ANDROID_UI_SMOKE_BUILD",
+                "select_apk",
+                "app/build/outputs/apk/release",
+                "could not install APK",
+                "./gradlew :app:assembleRelease >&2",
+                "./gradlew :app:assembleDebug >&2",
+                "ghostex_android_package_name",
+                "adb_cmd uninstall \"$runtime_package\"",
+                "adb_cmd uninstall \"$test_package\"",
+                "fill_edit_text 1 \"Smoke_Mac\"",
+                "fill_edit_text 2 \"127.0.0.1\"",
+                "fill_edit_text 3 \"ghostex\"",
+                "assert_any_text \"Phone setup required\" \"Connection needs attention\" \"No ZMX sessions yet\"",
+                "08-restart-reconnects-saved-machine",
+                "09-phone-setup-panel",
+                "Prepare this phone",
+                "Install SSH",
+                "10-saved-machine-settings",
+                "11-saved-machine-action-sheet",
+                "12-saved-machine-action-sheet-bottom",
+                "Check connection",
+                "Copy SSH target",
+                "Reset SSH host key",
+                "screencap -p",
+                "ghostex-android-adb.sh",
+                "resolve_ghostex_android_adb",
+                "GHOSTEX_ANDROID_ADB",
+                "GHOSTEX_ANDROID_CONFIRM_CLEAR_DATA",
+                "require_ghostex_android_data_clear_confirmation"
+            ].each { required ->
+                if (!text.contains(required)) violations.add("ghostex-android-ui-smoke.sh missing " + required)
+            }
+        }
+        if (!completionPolicy.isFile() ||
+            !completionPolicy.getText("UTF-8").contains("shouldMarkTutorialSeenFromTutorialAction") ||
+            !completionPolicy.getText("UTF-8").contains("shouldMarkTutorialSeenAfterMachineSave")) {
+            violations.add("GhostexOnboardingCompletionPolicy must gate first-run tutorial completion")
+        }
+        if (!completionPolicyTest.isFile() ||
+            !completionPolicyTest.getText("UTF-8").contains("requiredFirstRunNeedsSavedMachineBeforeTutorialCanBeSeen") ||
+            !completionPolicyTest.getText("UTF-8").contains("firstMachineSaveCompletesUnseenOnboarding")) {
+            violations.add("GhostexOnboardingCompletionPolicyTest must cover first-run completion gating")
+        }
+        if (!controller.isFile() ||
+            !controller.getText("UTF-8").contains("requiredMachineSetupInProgress") ||
+            !controller.getText("UTF-8").contains("showMachineEditor(null, requiredFirstRun") ||
+            !controller.getText("UTF-8").contains("GhostexOnboardingCompletionPolicy.shouldMarkTutorialSeenAfterMachineSave")) {
+            violations.add("GhostexAndroidController must keep first-run tutorial active until machine setup succeeds")
+        }
+        if (!violations.isEmpty()) {
+            throw new GradleException("Ghostex Android UI smoke harness is incomplete: " + violations.join(", "))
+        }
+    }
+}
+
+task verifyGhostexReleaseStoreMetadata() {
+    doLast {
+        /*
+        CDXC:AndroidBranding 2026-05-17-16:37:
+        Store metadata is part of the release surface. The APK label can say
+        Ghostex while Fastlane still advertises stock Termux; fail release
+        builds if local metadata stops describing the Tailscale SSH,
+        Ghostex CLI, and ZMX session workflow.
+
+        CDXC:AndroidBranding 2026-05-17-16:42:
+        Store screenshots and icon are also product promises. Validate the
+        deterministic Ghostex image generator and output dimensions, and reject
+        the old stock Termux/Picasa screenshot artifacts.
+
+        CDXC:AndroidBranding 2026-05-17-20:13:
+        Store screenshots must preview the same neutral macOS-style drawer
+        palette as the shipped Android UI. Keep the generator tokens gated so
+        release assets do not drift back to the old blue-slate concept palette.
+
+        CDXC:AndroidBranding 2026-05-17-20:16:
+        The checked-in Fastlane JPEGs are release artifacts too. Validate a
+        sampled screenshot background pixel against the neutral drawer shell so
+        updating only the generator cannot leave stale image binaries in git.
+        */
+        def metadataDir = new File(rootDir, "fastlane/metadata/android/en-US")
+        def title = new File(metadataDir, "title.txt")
+        def shortDescription = new File(metadataDir, "short_description.txt")
+        def fullDescription = new File(metadataDir, "full_description.txt")
+        def imagesDir = new File(metadataDir, "images")
+        def screenshotsDir = new File(imagesDir, "phoneScreenshots")
+        def generator = new File(rootDir, "tools/generate-ghostex-store-assets.swift")
+        def violations = []
+        if (!title.isFile() || title.getText("UTF-8").trim() != "Ghostex Android") {
+            violations.add("title.txt must be Ghostex Android")
+        }
+        if (!shortDescription.isFile() || !shortDescription.getText("UTF-8").contains("Ghostex")) {
+            violations.add("short_description.txt must describe Ghostex Android")
+        }
+        if (!fullDescription.isFile()) {
+            violations.add("full_description.txt is missing")
+        } else {
+            def fullText = fullDescription.getText("UTF-8")
+            ["Ghostex Android", "Tailscale SSH", "Ghostex CLI", "ZMX"].each { required ->
+                if (!fullText.contains(required)) violations.add("full_description.txt missing " + required)
+            }
+            if (fullText.contains("Termux is a terminal emulator application enhanced")) {
+                violations.add("full_description.txt still contains stock Termux store copy")
+            }
+        }
+        def generatorText = generator.isFile() ? generator.getText("UTF-8") : ""
+        if (!generator.isFile() || !generatorText.contains("Ghostex Android marketplace images")) {
+            violations.add("missing deterministic Ghostex store asset generator")
+        } else {
+            ["static let bg = color(0x181818)",
+             "static let input = color(0x0e0e0e)",
+             "static let accent = color(0x7dd3fc)",
+             "static let working = color(0xf59e0b)",
+             "static let attention = color(0x22c55e)"].each { required ->
+                if (!generatorText.contains(required)) {
+                    violations.add("store asset generator missing neutral shipped-palette token " + required)
+                }
+            }
+            ["0x10141d", "0x171d28", "0x7aa8ff", "0x77d2c2"].each { stale ->
+                if (generatorText.contains(stale)) {
+                    violations.add("store asset generator still contains stale blue-slate palette token " + stale)
+                }
+            }
+        }
+        def icon = new File(imagesDir, "icon.png")
+        validateImage(icon, 512, 512, "icon.png", violations)
+        def screenshots = ["1.jpg", "2.jpg", "3.jpg", "4.jpg"].collect { new File(screenshotsDir, it) }
+        screenshots.each { screenshot ->
+            validateImage(screenshot, 1080, 2340, "phoneScreenshots/" + screenshot.name, violations)
+            validateApproxImagePixel(screenshot, 8, 8, 0x18, 0x18, 0x18, 14,
+                "phoneScreenshots/" + screenshot.name + " neutral background", violations)
+            if (screenshot.isFile()) {
+                def markerText = new String(screenshot.bytes, "ISO-8859-1")
+                ["Welcome to Termux", "Picasa", "termux.com/community"].each { staleMarker ->
+                    if (markerText.contains(staleMarker)) {
+                        violations.add("phoneScreenshots/" + screenshot.name + " still contains stock Termux marker " + staleMarker)
+                    }
+                }
+            }
+        }
+        if (!violations.isEmpty()) {
+            throw new GradleException("Ghostex Android store metadata is not release-ready: " + violations.join(", "))
+        }
+    }
+}
+
+def validateImage(File file, int expectedWidth, int expectedHeight, String label, List violations) {
+    if (!file.isFile()) {
+        violations.add(label + " is missing")
+        return
+    }
+    def image = javax.imageio.ImageIO.read(file)
+    if (image == null) {
+        violations.add(label + " is not readable image data")
+        return
+    }
+    if (image.getWidth() != expectedWidth || image.getHeight() != expectedHeight) {
+        violations.add(label + " must be " + expectedWidth + "x" + expectedHeight + " but was " + image.getWidth() + "x" + image.getHeight())
+    }
+}
+
+def ghostexReleaseArtifacts(File directory, java.util.regex.Pattern pattern) {
+    def files = directory.listFiles({ File dir, String name ->
+        pattern.matcher(name).matches()
+    } as FilenameFilter) ?: [] as File[]
+    return files.toList().sort { it.name }
+}
+
+def ghostexReleaseApksFromMetadata(File apkDir) {
+    /*
+    CDXC:AndroidReleaseCI 2026-05-17-21:44:
+    The Gradle output metadata is the authoritative APK handoff list. Use it
+    for checksums and reject extra Ghostex APK files in the output directory so
+    stale artifacts cannot be signed, uploaded, or treated as release evidence.
+    */
+    def metadata = new File(apkDir, "output-metadata.json")
+    if (!metadata.isFile()) {
+        throw new GradleException("Missing release APK output metadata: " + metadata)
+    }
+    def parsed = new groovy.json.JsonSlurper().parse(metadata)
+    def apks = []
+    parsed.elements.each { element ->
+        def outputFile = element.outputFile == null ? "" : element.outputFile.toString()
+        if (!outputFile.startsWith("ghostex-android_") || !outputFile.endsWith(".apk")) {
+            throw new GradleException("Release APK output metadata contains unexpected artifact name: " + outputFile)
+        }
+        def apk = new File(apkDir, outputFile)
+        if (!apk.isFile()) {
+            throw new GradleException("Release APK output metadata references a missing artifact: " + apk)
+        }
+        apks.add(apk)
+    }
+    def metadataNames = apks.collect { it.name } as Set
+    def extraApks = ghostexReleaseArtifacts(apkDir, ~/ghostex-android_.*\.apk/).findAll { !metadataNames.contains(it.name) }
+    if (!extraApks.isEmpty()) {
+        throw new GradleException("Release APK output directory contains stale Ghostex artifacts not listed in output-metadata.json: " + extraApks.collect { it.name }.join(", "))
+    }
+    return apks.sort { it.name }
+}
+
+def writeGhostexReleaseSha256Sums(File output, List<File> artifacts) {
+    output.parentFile.mkdirs()
+    output.withWriter("UTF-8") { writer ->
+        artifacts.each { artifact ->
+            writer.write(ghostexSha256(artifact) + "  " + artifact.name + "\n")
+        }
+    }
+}
+
+def verifyGhostexReleaseSha256Sums(File sumsFile, List<File> artifacts, String label) {
+    if (!sumsFile.isFile()) {
+        throw new GradleException("Missing SHA256SUMS for " + label + ": " + sumsFile)
+    }
+    if (artifacts.isEmpty()) {
+        throw new GradleException("No Ghostex Android " + label + " artifacts found beside " + sumsFile + ".")
+    }
+    def expected = artifacts.collectEntries { artifact ->
+        [(artifact.name): ghostexSha256(artifact)]
+    }
+    def actual = [:]
+    sumsFile.eachLine("UTF-8") { line ->
+        def matcher = line =~ /^([0-9a-f]{64})  ([^\/\\]+)$/
+        if (!matcher.matches()) {
+            throw new GradleException("Malformed SHA256SUMS line for " + label + ": " + line)
+        }
+        actual[matcher.group(2)] = matcher.group(1)
+    }
+    if (actual != expected) {
+        throw new GradleException("SHA256SUMS for " + label + " does not match current artifacts. Expected " + expected + " but found " + actual + ".")
+    }
+}
+
+def ghostexSha256(File file) {
+    def digest = java.security.MessageDigest.getInstance("SHA-256")
+    file.withInputStream { input ->
+        def buffer = new byte[8192]
+        int read
+        while ((read = input.read(buffer)) != -1) {
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().collect { String.format("%02x", it & 0xff) }.join()
+}
+
+def validateApproxImagePixel(File file, int x, int y, int expectedRed, int expectedGreen,
+                             int expectedBlue, int tolerance, String label, List violations) {
+    if (!file.isFile()) return
+    def image = javax.imageio.ImageIO.read(file)
+    if (image == null) return
+    if (x < 0 || y < 0 || x >= image.getWidth() || y >= image.getHeight()) {
+        violations.add(label + " sample point is outside image bounds")
+        return
+    }
+    int rgb = image.getRGB(x, y)
+    int red = (rgb >> 16) & 0xff
+    int green = (rgb >> 8) & 0xff
+    int blue = rgb & 0xff
+    if (Math.abs(red - expectedRed) > tolerance ||
+        Math.abs(green - expectedGreen) > tolerance ||
+        Math.abs(blue - expectedBlue) > tolerance) {
+        violations.add(label + " pixel must be close to #" +
+            String.format("%02X%02X%02X", expectedRed, expectedGreen, expectedBlue) +
+            " but was #" + String.format("%02X%02X%02X", red, green, blue))
+    }
+}
+
+task verifyGhostexReleaseRepoDocs() {
+    doLast {
+        /*
+        CDXC:AndroidBranding 2026-05-17-16:38:
+        The GitHub/repo docs are release-facing surfaces for the Android app.
+        Fail release builds if they regress to upstream Termux landing copy or
+        stop documenting the Ghostex Android Tailscale SSH, Ghostex CLI, and
+        ZMX product contract.
+
+        CDXC:AndroidReleaseE2E 2026-05-17-19:26:
+        README release verification must match the current disposable-device
+        harness behavior. UI smoke should document release-candidate APK
+        selection, while live E2E should document package uninstall/data-clear
+        confirmation before debug instrumentation is installed.
+
+        CDXC:AndroidReleaseCI 2026-05-17-20:58:
+        Release docs should make checksum artifacts explicit. A local build that
+        only assembles APK/AAB outputs is not enough evidence for handoff unless
+        the matching SHA256SUMS files are generated and verified too.
+
+        CDXC:AndroidReleaseE2E 2026-05-17-20:54:
+        Release docs must lead with the strict root `npm run
+        android:verify-release` path. Gradle, UI smoke, and live E2E commands
+        are useful details, but they should not replace the one-command final
+        proof that also checks Mac CLI readiness, signing, checksums, and
+        signatures.
+        */
+        def readme = new File(rootDir, "README.md")
+        def docsIndex = new File(rootDir, "docs/en/index.md")
+        def violations = []
+        if (!readme.isFile()) {
+            violations.add("README.md is missing")
+        } else {
+            def readmeText = readme.getText("UTF-8")
+            ["# Ghostex Android", "Tailscale SSH", "Ghostex CLI", "ZMX", "termux/termux-app", "npm run android:verify-release", "npm run android:verify-release:local", "GHOSTEX_ANDROID_REQUIRE_RELEASE_SIGNING=1", "GHOSTEX_ANDROID_SIGNING_STORE_FILE", "GHOSTEX_ANDROID_CONFIRM_CLEAR_DATA", "GHOSTEX_ANDROID_UI_SMOKE_BUILD=release", "GHOSTEX_ANDROID_UI_SMOKE_APK", "com.ghostx", "side-by-side", "installs/verifies phone-side OpenSSH", ":app:verifyGhostexReleaseChecksums", "SHA256SUMS", "signature verification", "not final release proof"].each { required ->
+                if (!readmeText.contains(required)) violations.add("README.md missing " + required)
+            }
+            if (readmeText.startsWith("# Termux application")) {
+                violations.add("README.md still starts with upstream Termux title")
+            }
+            if (readmeText.contains("installs the debug APK")) {
+                violations.add("README.md still describes UI smoke as debug-APK only")
+            }
+        }
+        if (!docsIndex.isFile() || !docsIndex.getText("UTF-8").contains("# Ghostex Android Docs")) {
+            violations.add("docs/en/index.md must introduce Ghostex Android docs")
+        }
+        if (!violations.isEmpty()) {
+            throw new GradleException("Ghostex Android repo docs are not release-ready: " + violations.join(", "))
+        }
+    }
+}
+
+task verifyGhostexReleaseCiSurface() {
+    doLast {
+        /*
+        CDXC:AndroidReleaseCI 2026-05-17-16:49:
+        Ghostex Android needs a dedicated release-candidate workflow that
+        builds branded release APK/AAB artifacts, handles optional signing
+        secrets outside the checkout, uploads Ghostex-named artifacts, and
+        reminds release QA to run the live Tailscale/SSH/Ghostex/ZMX device
+        harness.
+
+        CDXC:AndroidReleaseCI 2026-05-17-17:50:
+        Publish readiness needs an Android App Bundle in addition to install-test
+        APKs. Keep the release candidate workflow building `bundleRelease`,
+        consuming the Gradle-produced Ghostex-versioned AAB, checksumming it,
+        and uploading it with the APKs.
+
+        CDXC:AndroidReleaseCI 2026-05-17-19:18:
+        Release candidates must also run `lintRelease` in CI. Local release
+        verification depends on lint for target API 35, manifest, and Android UX
+        regressions, so CI should fail before uploading artifacts when release
+        lint would fail locally.
+
+        CDXC:AndroidReleaseCI 2026-05-17-16:49:
+        Upstream Termux debug-release workflows must stay manual-only in this
+        fork so publishing a Ghostex release cannot attach Termux-branded debug
+        APKs or trigger Termux JitPack library release behavior.
+
+        CDXC:AndroidReleaseCI 2026-05-17-20:34:
+        Release-candidate CI should use stable GitHub Action majors and upload
+        both connected-device QA harnesses plus their adb helper. The workflow
+        artifact should be enough to prove live SSH/ZMX and first-run setup UX
+        before publishing, without reconstructing scripts from the checkout.
+
+        CDXC:AndroidReleaseCI 2026-05-17-20:41:
+        The inherited manual workflows still need to be runnable after Ghostex
+        branding changes. Gate workflow files against future-looking Action
+        majors and old `termux-app_` artifact prefixes so manual debug/sync
+        jobs do not rot while the release workflow stays dedicated to Ghostex.
+
+        CDXC:AndroidReleaseCI 2026-05-17-22:52:
+        Release candidates need reviewable evidence, not only install artifacts.
+        Upload release lint reports and unit-test HTML output with the APK/AAB
+        so a candidate can be inspected before running the final device proof.
+
+        CDXC:AndroidReleaseE2E 2026-05-17-20:21:
+        The release-candidate summary is an operator runbook. Its live E2E
+        command must include the same disposable-device confirmation required
+        by the harness, otherwise QA instructions fail after artifact upload.
+
+        CDXC:AndroidReleaseCI 2026-05-17-20:58:
+        CI and local release verification should use the same Gradle checksum
+        task for Ghostex APK/AAB artifacts. Gate the workflow and checksum task
+        on `:app:verifyGhostexReleaseChecksums` so checksum evidence cannot
+        drift between local QA and uploaded release candidates.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-21:14:
+        Signed release candidates should get the same post-build APK/AAB
+        signature inspection as strict local release proof. Gate the shared
+        signature helper, signed-workflow step, and uploaded harness artifact so
+        publish evidence does not depend only on Gradle saying signing ran.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-21:25:
+        The signature helper must stay portable across macOS release machines
+        and Linux CI. Gate Bash-based Android build-tools version selection and
+        reject GNU-only `sort -V` plus Bash 4-only `mapfile` so strict local
+        proof does not fail before signature inspection starts.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-21:31:
+        AAB signature verification must inspect jarsigner output, not only its
+        exit code, because unsigned bundles can return success while reporting
+        `jar is unsigned.`. Gate the positive and negative output checks.
+
+        CDXC:AndroidReleaseCI 2026-05-17-21:44:
+        Release artifact directories must not leak stale Ghostex APKs from
+        previous split/universal builds into checksums, signature proof, or CI
+        upload globs. Gate pre-package cleanup and output-metadata based APK
+        checksums so release handoff artifacts match the current Gradle build.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-20:47:
+        Signature verification must follow SHA256SUMS as the release artifact
+        manifest. Gate the helper against independent APK/AAB output scanning
+        so strict local proof and signed CI verify the same handoff files.
+        */
+        def violations = []
+        def workflowDir = new File(rootDir, ".github/workflows")
+        def ghostexWorkflow = new File(workflowDir, "ghostex_android_release_candidate.yml")
+        def buildText = new File(projectDir, "build.gradle").getText("UTF-8")
+        def signatureHelper = new File(rootDir, "tools/ghostex-android-verify-release-signatures.sh")
+        if (!ghostexWorkflow.isFile()) {
+            violations.add("missing .github/workflows/ghostex_android_release_candidate.yml")
+        } else {
+            def text = ghostexWorkflow.getText("UTF-8")
+            [
+                "name: Ghostex Android Release Candidate",
+                "permissions:",
+                "contents: read",
+                "GHOSTEX_ANDROID_REQUIRE_RELEASE_SIGNING",
+                "GHOSTEX_ANDROID_SIGNING_KEYSTORE_BASE64",
+                "\${RUNNER_TEMP}/ghostex-android-release.jks",
+                "actions/checkout@v4",
+                "actions/setup-java@v4",
+                "actions/upload-artifact@v4",
+                ":app:testDebugUnitTest",
+                ":app:compileDebugAndroidTestJavaWithJavac",
+                ":app:assembleRelease",
+                ":app:bundleRelease",
+                ":app:lintRelease",
+                ":app:verifyGhostexReleaseChecksums",
+                "ghostex-android_*.apk",
+                "ghostex-android_*.aab",
+                "app/build/outputs/bundle/release/SHA256SUMS",
+                "app/build/reports/lint-results-release.html",
+                "app/build/reports/lint-results-release.xml",
+                "app/build/reports/lint-results-release.txt",
+                "app/build/reports/tests/testDebugUnitTest/**",
+                "tools/ghostex-android-adb.sh",
+                "tools/ghostex-android-device-e2e.sh",
+                "tools/ghostex-android-ui-smoke.sh",
+                "tools/ghostex-android-verify-release-signatures.sh",
+                "Verify signed release artifacts",
+                "if: env.GHOSTEX_ANDROID_REQUIRE_RELEASE_SIGNING == '1'",
+                "GHOSTEX_ANDROID_CONFIRM_CLEAR_DATA=1",
+                "GHOSTEX_ANDROID_CONFIRM_CLEAR_DATA=1 \\\n          GHOSTEX_ANDROID_HOST=<tailscale-ip-or-hostname>",
+                "Tailscale/SSH/Ghostex/ZMX"
+            ].each { required ->
+                if (!text.contains(required)) violations.add("ghostex_android_release_candidate.yml missing " + required)
+            }
+            ["cleanGhostexReleaseApkOutputs", "generateGhostexReleaseChecksums", "verifyGhostexReleaseChecksums", "ghostexReleaseApksFromMetadata", "output-metadata.json", "writeGhostexReleaseSha256Sums", "verifyGhostexReleaseSha256Sums"].each { required ->
+                if (!buildText.contains(required)) violations.add("build.gradle missing release checksum task/helper " + required)
+            }
+            if (text.contains("pull_request_target")) {
+                violations.add("ghostex_android_release_candidate.yml must not use pull_request_target")
+            }
+            if (text.contains("secrets.") && !text.contains("if: env.GHOSTEX_ANDROID_REQUIRE_RELEASE_SIGNING == '1'")) {
+                violations.add("ghostex_android_release_candidate.yml must keep signing secrets behind explicit release-signing opt-in")
+            }
+        }
+        if (!signatureHelper.isFile()) {
+            violations.add("missing tools/ghostex-android-verify-release-signatures.sh")
+        } else {
+            def helperText = signatureHelper.getText("UTF-8")
+            ["apksigner", "jarsigner", "GHOSTEX_ANDROID_APKSIGNER", "SHA256SUMS", "ghostex-android_*.apk", "ghostex-android_*.aab", "ANDROID_HOME", "ANDROID_SDK_ROOT", "find_latest_ghostex_android_apksigner", "ghostex_android_version_greater", "run_jarsigner_verify_aab", "collect_ghostex_signed_artifacts_from_sums", "jar is unsigned.", "jar verified."].each { required ->
+                if (!helperText.contains(required)) violations.add("ghostex-android-verify-release-signatures.sh missing " + required)
+            }
+            if (helperText.contains("sort -V")) {
+                violations.add("ghostex-android-verify-release-signatures.sh must not use GNU-only sort -V")
+            }
+            if (helperText.contains("mapfile")) {
+                violations.add("ghostex-android-verify-release-signatures.sh must not use Bash 4-only mapfile")
+            }
+            if (helperText.contains('find "$apk_dir"') || helperText.contains('find "$bundle_dir"')) {
+                violations.add("ghostex-android-verify-release-signatures.sh must use SHA256SUMS instead of scanning release artifact directories")
+            }
+        }
+
+        [
+            "debug_build.yml",
+            "attach_debug_apks_to_release.yml",
+            "trigger_library_builds_on_jitpack.yml"
+        ].each { fileName ->
+            def workflow = new File(workflowDir, fileName)
+            if (!workflow.isFile()) {
+                violations.add("missing upstream workflow marker " + fileName)
+                return
+            }
+            def text = workflow.getText("UTF-8")
+            if (!text.contains("on:\n  workflow_dispatch:")) {
+                violations.add(fileName + " must be manual-only")
+            }
+            if (!text.contains("CDXC:AndroidReleaseCI")) {
+                violations.add(fileName + " must document why its upstream trigger is disabled")
+            }
+        }
+
+        workflowDir.eachFileMatch(~/.*\.ya?ml/) { workflow ->
+            def text = workflow.getText("UTF-8")
+            [
+                "actions/checkout@v5",
+                "actions/checkout@v6",
+                "actions/setup-java@v5",
+                "actions/setup-java@v6",
+                "actions/upload-artifact@v5",
+                "actions/upload-artifact@v6",
+                "gradle/actions/dependency-submission@v5",
+                "gradle/actions/wrapper-validation@5"
+            ].each { forbidden ->
+                if (text.contains(forbidden)) violations.add(workflow.name + " uses unverified workflow action major " + forbidden)
+            }
+            if (text.contains("APK_BASENAME_PREFIX=\"termux-app_")) {
+                violations.add(workflow.name + " still expects Termux-branded APK artifact names")
+            }
+        }
+
+        if (!violations.isEmpty()) {
+            throw new GradleException("Ghostex Android CI/release surface is not release-ready: " + violations.join(", "))
+        }
+    }
+}
+
+def findManifestTagForComponent(String text, String componentName) {
+    def candidates = [componentName]
+    if (componentName.startsWith(".")) {
+        candidates.add(project.ext.ghostexRuntimePackageName + componentName)
+    }
+    for (String candidate : candidates) {
+        def escapedName = java.util.regex.Pattern.quote(candidate)
+        def matcher = text =~ /<(activity|activity-alias|provider|receiver|service)\b(?=[^>]*android:name="${escapedName}")[^>]*>/
+        if (matcher.find()) return matcher.group(0)
+    }
+    return null
+}
+
+def hasAndroidAttribute(String text, String attribute, String value) {
+    return text.contains("android:" + attribute + "=\"" + value + "\"")
+}
+
 afterEvaluate {
     android.applicationVariants.all { variant ->
-        variant.javaCompileProvider.get().dependsOn(downloadBootstraps)
+        variant.javaCompileProvider.get().dependsOn(verifyGhostexBootstrapPrefix)
+    }
+    tasks.named("packageRelease").configure {
+        dependsOn cleanGhostexReleaseApkOutputs
+    }
+    tasks.named("assembleRelease").configure {
+        dependsOn cleanGhostexReleaseApkOutputs
+        dependsOn verifyGhostexReleasePermissions
+        dependsOn verifyGhostexReleaseRuntimeSurface
+        dependsOn verifyGhostexReleaseNotificationSurface
+        dependsOn verifyGhostexReleaseDrawerSurface
+        dependsOn verifyGhostexReleaseRemoteCliContract
+        dependsOn verifyGhostexReleaseVersionIdentity
+        dependsOn verifyGhostexRemoteSessionInputSurface
+        dependsOn verifyGhostexReleaseEntryPoints
+        dependsOn verifyGhostexReleaseSigning
+        dependsOn verifyGhostexReleaseE2EHarness
+        dependsOn verifyGhostexReleaseUiSmokeHarness
+        dependsOn verifyGhostexReleaseStoreMetadata
+        dependsOn verifyGhostexReleaseRepoDocs
+        dependsOn verifyGhostexReleaseCiSurface
+    }
+    tasks.named("bundleRelease").configure {
+        dependsOn verifyGhostexReleasePermissions
+        dependsOn verifyGhostexReleaseRuntimeSurface
+        dependsOn verifyGhostexReleaseNotificationSurface
+        dependsOn verifyGhostexReleaseDrawerSurface
+        dependsOn verifyGhostexReleaseRemoteCliContract
+        dependsOn verifyGhostexReleaseVersionIdentity
+        dependsOn verifyGhostexRemoteSessionInputSurface
+        dependsOn verifyGhostexReleaseEntryPoints
+        dependsOn verifyGhostexReleaseSigning
+        dependsOn verifyGhostexReleaseE2EHarness
+        dependsOn verifyGhostexReleaseUiSmokeHarness
+        dependsOn verifyGhostexReleaseStoreMetadata
+        dependsOn verifyGhostexReleaseRepoDocs
+        dependsOn verifyGhostexReleaseCiSurface
+        finalizedBy copyGhostexReleaseBundle
     }
 }

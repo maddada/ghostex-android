@@ -3,7 +3,17 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:installLocation="internalOnly"
     android:sharedUserId="${TERMUX_PACKAGE_NAME}"
-    android:sharedUserLabel="@string/shared_user_label">
+    android:sharedUserMaxSdkVersion="32"
+    android:sharedUserLabel="@string/shared_user_label"
+    tools:targetApi="tiramisu">
+
+    <!--
+    CDXC:AndroidReleaseSurface 2026-05-17-17:32:
+    Ghostex Android disables the stock Termux plugin/utility entry points for
+    release, so new Android 13+ installs should not join the deprecated shared
+    UID. Keep the legacy sharedUserId capped to API 32 for old-device
+    compatibility while reducing modern install surface.
+    -->
 
     <uses-feature
         android:name="android.hardware.touchscreen"
@@ -12,38 +22,32 @@
         android:name="android.software.leanback"
         android:required="false" />
 
-    <permission
-        android:name="${TERMUX_PACKAGE_NAME}.permission.RUN_COMMAND"
-        android:description="@string/permission_run_command_description"
-        android:icon="@mipmap/ic_launcher"
-        android:label="@string/permission_run_command_label"
-        android:protectionLevel="dangerous" />
-
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <uses-permission android:name="android.permission.READ_LOGS" />
-    <uses-permission android:name="android.permission.DUMP" />
-    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
-    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+    CDXC:AndroidConnectionManagement 2026-05-17-14:18:
+    The drawer and tutorial have a first-level Open Tailscale action. Declare
+    only the Tailscale package visibility query so Android 11+ can launch an
+    installed Tailscale app without adding broad package-query permissions.
+    -->
+    <queries>
+        <package android:name="com.tailscale.ipn" />
+    </queries>
 
     <application
         android:name=".app.TermuxApplication"
         android:allowBackup="false"
         android:banner="@drawable/banner"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/application_name"
-        android:requestLegacyExternalStorage="true"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="false"
         android:theme="@style/Theme.TermuxApp.DayNight.DarkActionBar"
@@ -53,7 +57,6 @@
             android:name=".app.TermuxActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|keyboard|keyboardHidden|navigation"
-            android:label="@string/application_name"
             android:launchMode="singleTask"
             android:resizeableActivity="true"
             android:theme="@style/Theme.TermuxActivity.DayNight.NoActionBar"
@@ -74,9 +77,54 @@
                 android:resource="@xml/shortcuts" />
         </activity>
 
+        <!--
+        CDXC:AndroidReleaseSurface 2026-05-17-16:42:
+        Ghostex Android is a remote-session client, not a general Termux utility
+        launcher. Keep upstream components in the tree for syncability, but do
+        not expose non-Ghostex entry points such as IoT launch, file share/view,
+        documents provider, or external run-command service in release builds.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-19:08:
+        The release manifest should use least-privilege permissions for the
+        Ghostex remote-session workflow. Do not request stock Termux storage,
+        package-install, overlay, boot, app-usage, log, dump, alarm, or secure
+        settings permissions unless a Ghostex workflow explicitly needs them.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-17:00:
+        Ghostex Android keeps an explicit foreground service and user-visible
+        Keep awake notification action. Do not request Android's battery
+        optimization exemption permission unless a dedicated Ghostex UX explains
+        that exceptional power behavior.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-17:00:
+        API 35 release builds need modern foreground-service declarations. The
+        retained TermuxService is a user-visible remote terminal/SSH session
+        surface that does not fit a narrower Android service type, so declare
+        specialUse with a reviewer-readable subtype and request notification
+        permission from the launcher activity on Android 13+.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-19:24:
+        Disabled stock file share/view aliases should not retain their external
+        SEND/VIEW filters. Even disabled, stale filters confuse lint and future
+        implicit-intent behavior; keep the upstream aliases as inert sync
+        markers without exposing generic file workflows.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-19:43:
+        The release manifest should not declare the stock RUN_COMMAND
+        permission/action or static boot receiver path. Ghostex Android opens
+        remote sessions from its own UI and does not provide a third-party
+        arbitrary command API or boot automation surface.
+
+        CDXC:AndroidReleaseSurface 2026-05-17-13:14:
+        Ghostex Android does not expose stock Termux file workflows or storage
+        permission prompts. Do not request legacy external-storage behavior in
+        the release manifest; remote SSH/ZMX sessions should stay inside the
+        app-private Termux runtime.
+        -->
         <activity-alias
             android:name=".HomeActivity"
-            android:exported="true"
+            android:enabled="false"
+            android:exported="false"
             android:targetActivity=".app.TermuxActivity">
 
             <!-- Launch activity automatically on boot on Android Things devices -->
@@ -91,16 +139,24 @@
         <activity
             android:name=".app.activities.HelpActivity"
             android:exported="false"
-            android:label="@string/application_name"
             android:parentActivityName=".app.TermuxActivity"
             android:resizeableActivity="true"
             tools:targetApi="n" />
 
         <activity
             android:name=".app.activities.SettingsActivity"
-            android:exported="true"
+            android:enabled="false"
+            android:exported="false"
             android:label="@string/title_activity_termux_settings"
-            android:theme="@style/Theme.TermuxApp.DayNight.NoActionBar" />
+            android:theme="@style/Theme.TermuxApp.DayNight.NoActionBar">
+            <!--
+            CDXC:AndroidReleaseSurface 2026-05-17-15:10:
+            Ghostex settings live in the remote-session drawer, not the stock
+            Termux preferences activity. Keep the upstream class available for
+            syncability, but disable the manifest entry so plugin/debug/local
+            terminal preferences cannot become a release settings path.
+            -->
+        </activity>
 
         <activity
             android:name=".shared.activities.ReportActivity"
@@ -119,48 +175,23 @@
 
         <activity-alias
             android:name=".app.api.file.FileShareReceiverActivity"
-            android:exported="true"
+            android:enabled="false"
+            android:exported="false"
             android:targetActivity=".app.api.file.FileReceiverActivity">
-
-            <!-- Accept multiple file types when sending. -->
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-
-                <data android:mimeType="application/*" />
-                <data android:mimeType="audio/*" />
-                <data android:mimeType="image/*" />
-                <data android:mimeType="message/*" />
-                <data android:mimeType="multipart/*" />
-                <data android:mimeType="text/*" />
-                <data android:mimeType="video/*" />
-            </intent-filter>
         </activity-alias>
 
         <activity-alias
             android:name=".app.api.file.FileViewReceiverActivity"
-            android:exported="true"
+            android:enabled="false"
+            android:exported="false"
             android:targetActivity=".app.api.file.FileReceiverActivity">
-
-            <!-- Accept multiple file types to let Termux be usable as generic file viewer. -->
-            <intent-filter tools:ignore="AppLinkUrlError">
-                <action android:name="android.intent.action.VIEW" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-
-                <data android:mimeType="application/*" />
-                <data android:mimeType="audio/*" />
-                <data android:mimeType="image/*" />
-                <data android:mimeType="text/*" />
-                <data android:mimeType="video/*" />
-            </intent-filter>
         </activity-alias>
 
         <provider
             android:name=".filepicker.TermuxDocumentsProvider"
             android:authorities="${TERMUX_PACKAGE_NAME}.documents"
-            android:exported="true"
+            android:enabled="false"
+            android:exported="false"
             android:grantUriPermissions="true"
             android:permission="android.permission.MANAGE_DOCUMENTS">
             <intent-filter>
@@ -171,9 +202,9 @@
         <provider
             android:name=".app.TermuxOpenReceiver$ContentProvider"
             android:authorities="${TERMUX_PACKAGE_NAME}.files"
-            android:exported="true"
-            android:grantUriPermissions="true"
-            android:permission="${TERMUX_PACKAGE_NAME}.permission.RUN_COMMAND" />
+            android:enabled="false"
+            android:exported="false"
+            android:grantUriPermissions="true" />
 
 
         <receiver
@@ -182,11 +213,8 @@
 
         <receiver
             android:name=".app.event.SystemEventReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-            </intent-filter>
-        </receiver>
+            android:enabled="false"
+            android:exported="false" />
 
         <receiver
             android:name=".shared.activities.ReportActivity$ReportActivityBroadcastReceiver"
@@ -195,16 +223,17 @@
 
         <service
             android:name=".app.TermuxService"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps user-started Ghostex remote terminal sessions and SSH attach processes visible while the user switches between persistent ZMX sessions." />
+        </service>
 
         <service
             android:name=".app.RunCommandService"
-            android:exported="true"
-            android:permission="${TERMUX_PACKAGE_NAME}.permission.RUN_COMMAND">
-            <intent-filter>
-                <action android:name="${TERMUX_PACKAGE_NAME}.RUN_COMMAND" />
-            </intent-filter>
-        </service>
+            android:enabled="false"
+            android:exported="false" />
 
 
         <!-- This (or rather, value 2.1 or higher) is needed to make the Samsung Galaxy S8 mark the

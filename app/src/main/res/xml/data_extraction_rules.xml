@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+CDXC:AndroidConnectionSecurity 2026-05-17-20:17:
+Android 12+ cloud backup and device-transfer behavior must match Ghostex's
+local-only saved-machine contract. Exclude all app data unless a future Ghostex
+sync feature defines an explicit migration format.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+    </device-transfer>
+</data-extraction-rules>

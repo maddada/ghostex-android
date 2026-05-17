@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+CDXC:AndroidConnectionSecurity 2026-05-17-20:17:
+Saved SSH machine metadata, selected-machine state, and encrypted-password
+bookkeeping are local device configuration. Disable legacy backup so a release
+install cannot restore stale machine targets or credential references onto a
+different phone.
+-->
+<full-backup-content>
+    <exclude domain="root" path="." />
+</full-backup-content>
