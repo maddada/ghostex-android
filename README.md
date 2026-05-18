@@ -98,7 +98,7 @@ GHOSTEX_ANDROID_UI_SMOKE_BUILD=release \
 tools/ghostex-android-ui-smoke.sh
 ```
 
-The UI smoke uninstalls any existing `com.ghostx`/`com.ghostx.test` packages, clears Ghostex Android app data on the selected device, installs the selected Ghostex Android APK, verifies the scrollable tutorial setup steps, and confirms Done opens Add Machine for a fresh user. `GHOSTEX_ANDROID_UI_SMOKE_BUILD=release` exercises the release candidate; `GHOSTEX_ANDROID_UI_SMOKE_APK=/path/to/signed-release.apk` can point at an externally signed artifact. Use a disposable emulator/device or confirm there is no real Ghostex Android data to preserve before setting `GHOSTEX_ANDROID_CONFIRM_CLEAR_DATA=1`.
+The UI smoke uninstalls any existing `io.ghostex`/`io.ghostex.test` packages, clears Ghostex Android app data on the selected device, installs the selected Ghostex Android APK, verifies the scrollable tutorial setup steps, and confirms Done opens Add Machine for a fresh user. `GHOSTEX_ANDROID_UI_SMOKE_BUILD=release` exercises the release candidate; `GHOSTEX_ANDROID_UI_SMOKE_APK=/path/to/signed-release.apk` can point at an externally signed artifact. Use a disposable emulator/device or confirm there is no real Ghostex Android data to preserve before setting `GHOSTEX_ANDROID_CONFIRM_CLEAR_DATA=1`.
 
 Run the live device E2E harness before treating a build as release-ready:
 
@@ -110,15 +110,15 @@ GHOSTEX_ANDROID_CONFIRM_CLEAR_DATA=1 \
 tools/ghostex-android-device-e2e.sh
 ```
 
-The E2E harness uninstalls any existing `com.ghostx`/`com.ghostx.test` packages, installs the debug app/test APKs on a disposable connected Android device or emulator, starts Ghostex Android, waits for the fresh Termux bootstrap, installs/verifies phone-side OpenSSH and `sshpass`, and verifies Tailscale SSH reachability, remote `ghostex` and `zmx`, ZMX inventory parsing, stable-id attach command construction, and a stable-session-id remote action.
+The E2E harness uninstalls any existing `io.ghostex`/`io.ghostex.test` packages, installs the debug app/test APKs on a disposable connected Android device or emulator, starts Ghostex Android, and verifies Tailscale SSHJ reachability, remote `ghostex` and `zmx`, ZMX inventory parsing, stable-id attach command construction, and a stable-session-id remote action.
 
 If `GHOSTEX_ANDROID_PASSWORD` is set, the harness streams it into the debug app's private E2E storage and removes the staged files after the run; it is not forwarded as a Gradle instrumentation argument, written through host temp files, or written through shared Android temp storage. The instrumentation test deletes the private password file after the first read attempt, including failed reads, and keeps the value only in the test process for the remaining E2E methods.
 
 ## Package Identity
 
-Ghostex Android now uses the side-by-side runtime package id `com.ghostx`, so it can install next to upstream Termux (`com.termux`) on the same phone.
+Ghostex Android now uses the side-by-side runtime package id `io.ghostex`, so it can install next to upstream Termux (`com.termux`) on the same phone.
 
-The bundled Termux bootstrap is still built around an absolute private prefix, so the build generates local patched bootstrap archives for `/data/data/com.ghostx/files/usr` before native packaging. The `com.ghostx` id intentionally matches the byte length of `com.termux`; a longer package id requires Ghostex-built bootstrap and package artifacts for that new prefix.
+The bundled Termux bootstrap is still built around an absolute private prefix, so the build generates local patched bootstrap archives for `/data/data/io.ghostex/files/usr` before native packaging. The `io.ghostex` id intentionally matches the byte length of `com.termux`; a longer package id requires Ghostex-built bootstrap and package artifacts for that new prefix.
 
 ## Upstream Lineage
 

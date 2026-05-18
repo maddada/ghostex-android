@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 
 <!DOCTYPE resources [
-    <!ENTITY TERMUX_PACKAGE_NAME "com.ghostx">
+    <!ENTITY TERMUX_PACKAGE_NAME "io.ghostex">
     <!ENTITY TERMUX_APP_NAME "Ghostex Android">
     <!ENTITY TERMUX_API_APP_NAME "Termux:API">
     <!ENTITY TERMUX_BOOT_APP_NAME "Termux:Boot">
@@ -15,6 +15,7 @@
 
     <!-- CDXC:AndroidBranding 2026-05-17-10:13: The Android app should present as Ghostex Android even while it reuses Termux internals for the terminal surface and process model. -->
     <!-- CDXC:AndroidSideBySideInstall 2026-05-17-23:39: Resource text and package-sensitive permission labels should use the Ghostex package id so Android can install Ghostex Android beside upstream Termux. -->
+    <!-- CDXC:AndroidBranding 2026-05-18-06:41: Static resource entities must use `io.ghostex` so package-visible Android surfaces spell Ghostex correctly while preserving the same byte length as `com.termux`. -->
 
     <string name="application_name">&TERMUX_APP_NAME;</string>
     <string name="shared_user_label">&TERMUX_APP_NAME; user</string>
@@ -56,7 +57,8 @@
     <string name="action_create_named_session_confirm">Create</string>
 
     <string name="action_toggle_soft_keyboard">Keyboard</string>
-    <string name="action_attach_image">Attach image</string>
+    <string name="action_attach_file">Attach file</string>
+    <string name="action_refresh_terminal">Refresh terminal</string>
 
     <string name="msg_enabling_terminal_toolbar">Enabling Terminal Toolbar</string>
     <string name="msg_disabling_terminal_toolbar">Disabling Terminal Toolbar</string>
@@ -110,17 +112,22 @@
 
     <!-- Ghostex Android Drawer -->
     <!-- CDXC:AndroidSidebar 2026-05-17-20:05: Keep primary Ghostex drawer copy in resources so release lint stays clean while the layout remains a small upstream-friendly replacement for Termux's drawer. -->
-    <string name="ghostex_drawer_title">Ghostex Android</string>
+    <!-- CDXC:AndroidSidebar 2026-05-18-06:51: The drawer header should use the short Ghostex product name; Android remains in app/system copy where platform identity matters. -->
+    <string name="ghostex_drawer_title">Ghostex</string>
     <string name="ghostex_drawer_initial_status">Connect to a ZMX machine</string>
     <string name="ghostex_drawer_machines">Machines</string>
     <string name="ghostex_drawer_sessions">Sessions</string>
+    <string name="ghostex_drawer_exit_app">Exit Ghostex Android</string>
+    <string name="ghostex_drawer_settings">Settings</string>
+    <string name="ghostex_settings_status">Edit terminal behavior and display settings.</string>
+    <string name="ghostex_drawer_refresh_sessions">Refresh sessions</string>
     <string name="ghostex_drawer_tailscale">Tailscale</string>
     <string name="ghostex_drawer_setup">Setup</string>
     <string name="ghostex_drawer_retry">Retry</string>
     <string name="ghostex_drawer_add">Add</string>
     <string name="ghostex_keyboard_fab_text">⌨</string>
-    <string name="ghostex_image_attach_fab_text">▧</string>
-    <string name="ghostex_setup_checking_ssh_tools">Checking OpenSSH and sshpass…</string>
+    <string name="ghostex_file_attach_fab_text">▧</string>
+    <string name="ghostex_terminal_refresh_fab_text">↕</string>
     <string name="ghostex_save_password_securely">Save password securely on this device</string>
     <string name="ghostex_password_saving_requires_android_m">Password saving requires Android 6.0 or newer</string>
 

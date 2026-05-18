@@ -359,8 +359,12 @@ public final class TermuxConstants {
      * under `com.termux` for upstream sync; this id deliberately matches
      * `com.termux` length so the bundled bootstrap prefix can be patched
      * byte-for-byte during the app build.
+     *
+     * CDXC:AndroidBranding 2026-05-18-06:41:
+     * Use `io.ghostex` so runtime/package-visible Android surfaces spell
+     * Ghostex correctly while preserving the same byte length as `com.termux`.
      */
-    public static final String TERMUX_PACKAGE_NAME = "com.ghostx"; // Default: "com.termux"
+    public static final String TERMUX_PACKAGE_NAME = "io.ghostex"; // Default: "com.termux"
     /** Termux GitHub repo name */
     public static final String TERMUX_GITHUB_REPO_NAME = "termux-app"; // Default: "termux-app"
     /** Termux GitHub repo url */

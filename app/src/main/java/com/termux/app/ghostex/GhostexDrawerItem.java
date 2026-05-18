@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Set;
 
 public final class GhostexDrawerItem {
 
@@ -29,6 +30,7 @@ public final class GhostexDrawerItem {
     public final int workingCount;
     public final int attentionCount;
     public final int sleepingCount;
+    public final boolean collapsed;
     public final GhostexRemoteSession session;
 
     private GhostexDrawerItem(@NonNull Type type, @NonNull String stateTitle,
@@ -37,7 +39,8 @@ public final class GhostexDrawerItem {
                               @NonNull String projectId, @NonNull String groupId,
                               @NonNull String projectTitle, @NonNull String projectPath,
                               int sessionCount, int workingCount, int attentionCount,
-                              int sleepingCount, @Nullable GhostexRemoteSession session) {
+                              int sleepingCount, boolean collapsed,
+                              @Nullable GhostexRemoteSession session) {
         this.type = type;
         this.stateTitle = stateTitle;
         this.stateBody = stateBody;
@@ -51,6 +54,7 @@ public final class GhostexDrawerItem {
         this.workingCount = workingCount;
         this.attentionCount = attentionCount;
         this.sleepingCount = sleepingCount;
+        this.collapsed = collapsed;
         this.session = session;
     }
 
@@ -77,18 +81,28 @@ public final class GhostexDrawerItem {
     project into one synthetic group. Fall back to the stable session id so
     project-level context actions stay scoped to the row the user can inspect.
 
-    CDXC:AndroidSidebar 2026-05-17-21:09:
-    Project rows should sort by the most important visible session inside each
-    group, matching the macOS sidebar's attention, working, then Last Active
-    cues. Do not leave project order to the remote JSON's incidental sequence.
+    CDXC:AndroidSidebar 2026-05-18-16:13:
+    Project order is owned by the desktop Ghostex sidebar and reaches Android
+    through the CLI inventory. Preserve that group order on mobile while still
+    sorting sessions inside each project by attention, working, and recency.
+
+    CDXC:AndroidSidebar 2026-05-18-16:13:
+    Project headers are tappable disclosure rows on Android. Keep collapse state
+    keyed by the same project key used for project actions so refreshes preserve
+    the user's expanded/collapsed view without changing the Mac-side ordering.
     */
     public static GhostexDrawerItem stateCard(@NonNull String title, @NonNull String body,
                                               @NonNull String actionHint) {
         return new GhostexDrawerItem(Type.STATE_CARD, title, body, actionHint,
-            "", "", "", "", "", 0, 0, 0, 0, null);
+            "", "", "", "", "", 0, 0, 0, 0, false, null);
     }
 
     public static List<GhostexDrawerItem> buildItems(@NonNull List<GhostexRemoteSession> sessions) {
+        return buildItems(sessions, Collections.emptySet());
+    }
+
+    public static List<GhostexDrawerItem> buildItems(@NonNull List<GhostexRemoteSession> sessions,
+                                                     @NonNull Set<String> collapsedProjectKeys) {
         LinkedHashMap<String, ArrayList<GhostexRemoteSession>> groups = new LinkedHashMap<>();
         for (GhostexRemoteSession session : sessions) {
             String key = groupKey(session);
@@ -107,8 +121,6 @@ public final class GhostexDrawerItem {
             Collections.sort(groupSessions, GhostexSessionCardFormatter::compareForSidebarOrder);
             sortedGroups.add(new Group(key, groupSessions));
         }
-        Collections.sort(sortedGroups, (left, right) ->
-            GhostexSessionCardFormatter.compareForSidebarOrder(left.firstSession(), right.firstSession()));
 
         ArrayList<GhostexDrawerItem> items = new ArrayList<>();
         for (Group group : sortedGroups) {
@@ -123,13 +135,15 @@ public final class GhostexDrawerItem {
                 if ("attention".equals(status)) attention++;
                 if ("sleep".equals(status) || "sleeping".equals(status)) sleeping++;
             }
+            boolean collapsed = collapsedProjectKeys.contains(group.key);
             items.add(new GhostexDrawerItem(Type.PROJECT_HEADER, "", "", "", group.key,
                 first.projectId, first.groupId, first.displayProjectName(), first.projectPath,
-                groupSessions.size(), working, attention, sleeping, null));
+                groupSessions.size(), working, attention, sleeping, collapsed, null));
+            if (collapsed) continue;
             for (GhostexRemoteSession session : groupSessions) {
                 items.add(new GhostexDrawerItem(Type.SESSION, "", "", "", group.key,
                     first.projectId, first.groupId, first.displayProjectName(), first.projectPath,
-                    0, 0, 0, 0, session));
+                    0, 0, 0, 0, false, session));
             }
         }
         return items;

@@ -10,8 +10,8 @@ public final class GhostexSshCommandBuilderTest {
     /*
     CDXC:AndroidRemoteSessions 2026-05-17-10:37:
     SSH command construction is the app's bridge to the Mac-hosted Ghostex CLI.
-    Keep focused tests around quoting, saved-password behavior, and noninteractive
-    inventory refresh so Android does not regress into unsafe command strings.
+    Keep focused tests around quoting and remote Ghostex command construction
+    so Android does not regress into unsafe command strings.
 
     CDXC:AndroidRemoteSessions 2026-05-17-14:09:
     Android attach commands should send stable session ids to the Ghostex CLI
@@ -70,6 +70,11 @@ public final class GhostexSshCommandBuilderTest {
     Android project-header creation should call `ghostex create-session` with
     project/group context so the Mac app creates a zmx-backed session when zmx
     persistence is enabled in Settings.
+
+    CDXC:AndroidSidebar 2026-05-18-16:13:
+    Android project reordering uses `ghostex move-project` so desktop sidebar
+    persistence owns project placement and later session inventory returns the
+    same order to mobile.
     */
 
     @Test
@@ -78,44 +83,13 @@ public final class GhostexSshCommandBuilderTest {
     }
 
     @Test
-    public void sessionListUsesBatchModeWithoutSavedPassword() {
-        GhostexMachine machine = machine();
-        String command = GhostexSshCommandBuilder.buildSessionListCommand(machine, false);
-
-        Assert.assertTrue(command.contains("-o BatchMode=yes"));
-        Assert.assertFalse(command.contains("sshpass"));
-        Assert.assertTrue(command.contains("'madda@mac.tailnet.ts.net'"));
-        Assert.assertTrue(command.contains(GhostexSshCommandBuilder.shellQuote(
-            GhostexSshCommandBuilder.loginShellCommand("ghostex sessions --json"))));
-    }
-
-    @Test
-    public void sessionListUsesSshpassWithSavedPassword() {
-        String command = GhostexSshCommandBuilder.buildSessionListCommand(machine(), true);
-
-        Assert.assertTrue(command.startsWith("command -v sshpass >/dev/null 2>&1 && sshpass -e ssh "));
-        Assert.assertFalse(command.contains("-o BatchMode=yes"));
-    }
-
-    @Test
-    public void sessionListUsesBracketedIpv6Destination() {
-        GhostexMachine machine = new GhostexMachine("machine-ipv6", "IPv6 Mac",
-            "fd7a:115c:a1e0::42", "madda", 2222, false, 0L);
-
-        String command = GhostexSshCommandBuilder.buildSessionListCommand(machine, false);
-
-        Assert.assertTrue(command.contains("'madda@[fd7a:115c:a1e0::42]'"));
-        Assert.assertFalse(command.contains("'madda@fd7a:115c:a1e0::42'"));
-    }
-
-    @Test
-    public void attachRunsGhostexAttachThroughInteractiveSsh() {
+    public void copyableAttachCommandUsesInteractiveSshWithoutSshpass() {
         GhostexRemoteSession session = session();
 
-        String command = GhostexSshCommandBuilder.buildAttachCommand(machine(), session, true);
+        String command = GhostexSshCommandBuilder.buildCopyableAttachCommand(machine(), session);
 
-        Assert.assertTrue(command.contains("sshpass -e ssh -tt"));
-        Assert.assertTrue(command.contains("-o ConnectTimeout=8"));
+        Assert.assertTrue(command.startsWith("ssh -tt"));
+        Assert.assertFalse(command.contains("sshpass"));
         Assert.assertTrue(command.contains("'madda@mac.tailnet.ts.net'"));
         String quotedRemoteCommand = GhostexSshCommandBuilder.shellQuote(
             GhostexSshCommandBuilder.loginShellCommand("ghostex attach --session-id " + GhostexSshCommandBuilder.shellQuote(session.sessionId)));
@@ -129,10 +103,8 @@ public final class GhostexSshCommandBuilderTest {
 
         String command = GhostexSshCommandBuilder.buildSessionActionCommand(machine(), session, "sleep", false);
 
-        Assert.assertTrue(command.contains("-o BatchMode=yes"));
-        String quotedRemoteCommand = GhostexSshCommandBuilder.shellQuote(
-            GhostexSshCommandBuilder.loginShellCommand("ghostex sleep --session-id " + GhostexSshCommandBuilder.shellQuote(session.sessionId) + " --json"));
-        Assert.assertTrue(command.contains(quotedRemoteCommand));
+        Assert.assertEquals("ghostex sleep --session-id " + GhostexSshCommandBuilder.shellQuote(session.sessionId) + " --json",
+            command);
         Assert.assertFalse(command.contains("ghostex sleep " + GhostexSshCommandBuilder.shellQuote(session.alias)));
     }
 
@@ -165,7 +137,7 @@ public final class GhostexSshCommandBuilderTest {
             false
         );
 
-        assertMissingSessionIdFails(() -> GhostexSshCommandBuilder.buildAttachCommand(machine(), session, false));
+        assertMissingSessionIdFails(() -> GhostexSshCommandBuilder.attachRemoteCommand(session));
         assertMissingSessionIdFails(() -> GhostexSshCommandBuilder.buildSessionActionCommand(machine(), session, "sleep", false));
         assertMissingSessionIdFails(() -> GhostexSshCommandBuilder.buildRenameSessionCommand(machine(), session, "Title", false));
     }
@@ -176,12 +148,9 @@ public final class GhostexSshCommandBuilderTest {
 
         String command = GhostexSshCommandBuilder.buildRenameSessionCommand(machine(), session, "Ship Android's polish", true);
 
-        Assert.assertTrue(command.contains("sshpass -e ssh"));
-        String quotedRemoteCommand = GhostexSshCommandBuilder.shellQuote(
-            GhostexSshCommandBuilder.loginShellCommand("ghostex rename-session --session-id " +
-                GhostexSshCommandBuilder.shellQuote(session.sessionId) + " --title=" +
-                GhostexSshCommandBuilder.shellQuote("Ship Android's polish") + " --json"));
-        Assert.assertTrue(command.contains(quotedRemoteCommand));
+        Assert.assertEquals("ghostex rename-session --session-id " +
+            GhostexSshCommandBuilder.shellQuote(session.sessionId) + " --title=" +
+            GhostexSshCommandBuilder.shellQuote("Ship Android's polish") + " --json", command);
         Assert.assertFalse(command.contains("rename-session " + GhostexSshCommandBuilder.shellQuote(session.alias)));
     }
 
@@ -190,41 +159,28 @@ public final class GhostexSshCommandBuilderTest {
         String command = GhostexSshCommandBuilder.buildCreateSessionCommand(machine(),
             "project-1", "group-main", false);
 
-        Assert.assertTrue(command.contains("-o BatchMode=yes"));
-        String quotedRemoteCommand = GhostexSshCommandBuilder.shellQuote(
-            GhostexSshCommandBuilder.loginShellCommand("ghostex create-session --json --project-id " +
-                GhostexSshCommandBuilder.shellQuote("project-1") + " --group-id " +
-                GhostexSshCommandBuilder.shellQuote("group-main")));
-        Assert.assertTrue(command.contains(quotedRemoteCommand));
+        Assert.assertEquals("ghostex create-session --json --project-id " +
+            GhostexSshCommandBuilder.shellQuote("project-1") + " --group-id " +
+            GhostexSshCommandBuilder.shellQuote("group-main"), command);
     }
 
     @Test
-    public void connectionCheckValidatesRemoteGhostexCliAndZmxThroughLoginShell() {
-        String command = GhostexSshCommandBuilder.buildConnectionCheckCommand(machine(), false);
+    public void moveProjectUsesProjectIdAndDirectionFlags() {
+        String command = GhostexSshCommandBuilder.moveProjectRemoteCommand("project-1", "up");
 
-        Assert.assertTrue(command.contains("-o BatchMode=yes"));
-        String quotedRemoteCommand = GhostexSshCommandBuilder.shellQuote(
-            GhostexSshCommandBuilder.loginShellCommand(
-                "command -v ghostex >/dev/null || { printf '%s\\n' 'ghostex not found'; exit 127; }; " +
-                    "ghostex android-check --json"));
-        Assert.assertTrue(command.contains(quotedRemoteCommand));
-        Assert.assertFalse(command.contains("ghostex sessions --json >/dev/null"));
+        Assert.assertEquals("ghostex move-project --json --project-id " +
+            GhostexSshCommandBuilder.shellQuote("project-1") + " --direction " +
+            GhostexSshCommandBuilder.shellQuote("up"), command);
     }
 
     @Test
-    public void imageUploadCreatesRemoteDirectoryThenCopiesByScp() {
-        String command = GhostexSshCommandBuilder.buildImageUploadCommand(machine(), true,
-            "/data/data/com.ghostx/cache/ghostex-image-upload/photo 1.png",
-            "/tmp/ghostex-android-images/photo-1.png");
-
-        Assert.assertTrue(command.contains("sshpass -e ssh"));
-        Assert.assertTrue(command.contains(GhostexSshCommandBuilder.shellQuote(
-            "mkdir -p " + GhostexSshCommandBuilder.shellQuote("/tmp/ghostex-android-images"))));
-        Assert.assertTrue(command.contains("&& command -v sshpass >/dev/null 2>&1 && sshpass -e scp -q"));
-        Assert.assertTrue(command.contains("-P 2222"));
-        Assert.assertTrue(command.contains("'/data/data/com.ghostx/cache/ghostex-image-upload/photo 1.png'"));
-        Assert.assertTrue(command.contains("'madda@mac.tailnet.ts.net:/tmp/ghostex-android-images/photo-1.png'"));
-        Assert.assertFalse(command.contains("-o BatchMode=yes"));
+    public void moveProjectRejectsUnsupportedDirection() {
+        try {
+            GhostexSshCommandBuilder.moveProjectRemoteCommand("project-1", "up; rm -rf ~");
+            Assert.fail("Expected unsupported direction to fail.");
+        } catch (IllegalArgumentException error) {
+            Assert.assertEquals("Unsupported Ghostex project move direction: up; rm -rf ~", error.getMessage());
+        }
     }
 
     @Test

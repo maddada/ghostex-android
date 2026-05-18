@@ -15,6 +15,12 @@
 
     <!-- CDXC:AndroidConnectionManagement 2026-05-18-02:58: Keep machine switching and setup controls on a dedicated Machines drawer page so the sessions page stays focused on remote ZMX sessions. The top-right Machines/Sessions buttons are in-page navigation, not platform dialogs. -->
 
+    <!-- CDXC:AndroidNavigation 2026-05-18-05:07: Android back always opens this sidebar in Ghostex mode, so app exit must be a deliberate icon-only drawer action beside the icon-only Machines control instead of an implicit repeated-back gesture. -->
+
+    <!-- CDXC:AndroidSidebar 2026-05-18-06:51: The sessions sidebar header should read simply as Ghostex, expose a refresh control immediately left of Machines, and keep list-card gaps transparent so #262626 button chrome never appears as divider lines between session cards. -->
+
+    <!-- CDXC:AndroidSettings 2026-05-18-10:42: Ghostex Android needs a first-class in-drawer Settings page for important Termux terminal options like auto scroll instead of sending users to hidden stock settings. Put the Settings icon between Machines and Exit so the main sidebar header exposes Machines, Settings, then deliberate app exit. -->
+
     <LinearLayout
         android:id="@+id/ghostex_sessions_page"
         android:layout_width="match_parent"
@@ -38,15 +44,79 @@
                 android:textStyle="bold" />
 
             <com.google.android.material.button.MaterialButton
+                android:id="@+id/ghostex_refresh_sessions_button"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:contentDescription="@string/ghostex_drawer_refresh_sessions"
+                android:minWidth="48dp"
+                android:minHeight="48dp"
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp"
+                android:text=""
+                android:textAllCaps="false"
+                app:backgroundTint="@color/ghostex_sidebar_button"
+                app:icon="@drawable/ic_ghostex_refresh"
+                app:iconGravity="textStart"
+                app:iconPadding="0dp"
+                app:iconTint="@color/ghostex_sidebar_foreground" />
+
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/ghostex_open_machines_page_button"
                 style="?android:attr/buttonBarButtonStyle"
-                android:layout_width="wrap_content"
+                android:layout_width="48dp"
                 android:layout_height="48dp"
-                android:minWidth="88dp"
-                android:text="@string/ghostex_drawer_machines"
+                android:layout_marginStart="8dp"
+                android:contentDescription="@string/ghostex_drawer_machines"
+                android:minWidth="48dp"
+                android:minHeight="48dp"
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp"
+                android:text=""
                 android:textAllCaps="false"
-                android:textColor="@color/ghostex_sidebar_foreground"
-                app:backgroundTint="@color/ghostex_sidebar_button" />
+                app:backgroundTint="@color/ghostex_sidebar_button"
+                app:icon="@drawable/ic_ghostex_pc"
+                app:iconGravity="textStart"
+                app:iconPadding="0dp"
+                app:iconTint="@color/ghostex_sidebar_foreground" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/ghostex_open_settings_page_button"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="8dp"
+                android:contentDescription="@string/ghostex_drawer_settings"
+                android:minWidth="48dp"
+                android:minHeight="48dp"
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp"
+                android:text=""
+                android:textAllCaps="false"
+                app:backgroundTint="@color/ghostex_sidebar_button"
+                app:icon="@drawable/ic_ghostex_settings"
+                app:iconGravity="textStart"
+                app:iconPadding="0dp"
+                app:iconTint="@color/ghostex_sidebar_foreground" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/ghostex_exit_app_button"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="8dp"
+                android:contentDescription="@string/ghostex_drawer_exit_app"
+                android:minWidth="48dp"
+                android:minHeight="48dp"
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp"
+                android:text=""
+                android:textAllCaps="false"
+                app:backgroundTint="@color/ghostex_sidebar_button"
+                app:icon="@drawable/ic_ghostex_exit"
+                app:iconGravity="textStart"
+                app:iconPadding="0dp"
+                app:iconTint="@color/ghostex_sidebar_foreground" />
         </LinearLayout>
 
         <TextView
@@ -67,7 +137,7 @@
             android:background="@android:color/transparent"
             android:cacheColorHint="@android:color/transparent"
             android:choiceMode="singleChoice"
-            android:divider="@color/ghostex_sidebar_button"
+            android:divider="@android:color/transparent"
             android:dividerHeight="8dp"
             android:listSelector="@drawable/ghostex_drawer_session_selector"
             android:longClickable="true" />
@@ -193,5 +263,65 @@
                 android:textColor="@color/ghostex_sidebar_foreground"
                 app:backgroundTint="@color/ghostex_sidebar_button" />
         </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/ghostex_settings_page"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/ghostex_settings_page_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/ghostex_drawer_settings"
+                android:textColor="@color/ghostex_sidebar_foreground"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/ghostex_settings_back_to_sessions_button"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:minWidth="88dp"
+                android:text="@string/ghostex_drawer_sessions"
+                android:textAllCaps="false"
+                android:textColor="@color/ghostex_sidebar_foreground"
+                app:backgroundTint="@color/ghostex_sidebar_button" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/ghostex_settings_page_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/ghostex_settings_status"
+            android:textColor="@color/ghostex_sidebar_muted"
+            android:textSize="12sp" />
+
+        <ScrollView
+            android:id="@+id/ghostex_settings_page_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="12dp"
+            android:layout_weight="1"
+            android:fillViewport="false">
+
+            <LinearLayout
+                android:id="@+id/ghostex_settings_page_list"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
     </LinearLayout>
 </LinearLayout>

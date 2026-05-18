@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 
 <!DOCTYPE resources [
-    <!ENTITY TERMUX_PACKAGE_NAME "com.ghostx">
+    <!ENTITY TERMUX_PACKAGE_NAME "io.ghostex">
     <!ENTITY TERMUX_APP_NAME "Ghostex Android">
     <!ENTITY TERMUX_API_APP_NAME "Termux:API">
     <!ENTITY TERMUX_BOOT_APP_NAME "Termux:Boot">
@@ -9,12 +9,13 @@
     <!ENTITY TERMUX_STYLING_APP_NAME "Termux:Styling">
     <!ENTITY TERMUX_TASKER_APP_NAME "Termux:Tasker">
     <!ENTITY TERMUX_WIDGET_APP_NAME "Termux:Widget">
-    <!ENTITY TERMUX_PREFIX_DIR_PATH "/data/data/com.ghostx/files/usr">
+    <!ENTITY TERMUX_PREFIX_DIR_PATH "/data/data/io.ghostex/files/usr">
     ]>
 
 <resources>
 
     <!-- CDXC:AndroidSideBySideInstall 2026-05-17-23:39: Shared runtime strings should describe Ghostex Android's side-by-side private prefix, not upstream Termux's `/data/data/com.termux` prefix. -->
+    <!-- CDXC:AndroidBranding 2026-05-18-06:41: Shared runtime strings use `io.ghostex` so package-visible Android surfaces spell Ghostex correctly while preserving bootstrap prefix byte length. -->
 
     <string name="msg_directory_absolute_path">%1$s Directory Absolute Path: \"%2$s\"</string>
 

@@ -39,7 +39,25 @@
                     tools:ignore="UnusedAttribute" />
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/ghostex_image_attach_fab"
+                    android:id="@+id/ghostex_terminal_refresh_fab"
+                    android:layout_width="45dp"
+                    android:layout_height="45dp"
+                    android:layout_gravity="bottom|end"
+                    android:layout_marginEnd="132dp"
+                    android:layout_marginBottom="18dp"
+                    android:alpha="0.10"
+                    android:background="@drawable/ghostex_fab_background"
+                    android:contentDescription="@string/action_refresh_terminal"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:text="@string/ghostex_terminal_refresh_fab_text"
+                    android:textAllCaps="false"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    app:backgroundTint="@null" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/ghostex_file_attach_fab"
                     android:layout_width="45dp"
                     android:layout_height="45dp"
                     android:layout_gravity="bottom|end"
@@ -47,10 +65,10 @@
                     android:layout_marginBottom="18dp"
                     android:alpha="0.10"
                     android:background="@drawable/ghostex_fab_background"
-                    android:contentDescription="@string/action_attach_image"
+                    android:contentDescription="@string/action_attach_file"
                     android:minWidth="0dp"
                     android:minHeight="0dp"
-                    android:text="@string/ghostex_image_attach_fab_text"
+                    android:text="@string/ghostex_file_attach_fab_text"
                     android:textAllCaps="false"
                     android:textColor="#FFFFFF"
                     android:textSize="14sp"

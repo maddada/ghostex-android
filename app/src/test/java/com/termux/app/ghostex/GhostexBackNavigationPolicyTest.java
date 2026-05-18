@@ -6,16 +6,16 @@ import org.junit.Test;
 public final class GhostexBackNavigationPolicyTest {
 
     /*
-    CDXC:AndroidNavigation 2026-05-18-01:27:
-    The first Android back gesture is a sidebar shortcut for Ghostex Android;
-    only a second back gesture inside five seconds should exit the app.
+    CDXC:AndroidNavigation 2026-05-18-04:43:
+    Android back gestures are always sidebar shortcuts for Ghostex Android.
+    They must never exit the app; users leave from the explicit drawer button.
     */
     @Test
-    public void exitsOnlyAfterSecondBackInsideWindow() {
+    public void neverExitsFromBackShortcut() {
         Assert.assertFalse(GhostexBackNavigationPolicy.shouldExit(0L, 10_000L));
         Assert.assertFalse(GhostexBackNavigationPolicy.shouldExit(10_000L, 15_001L));
-        Assert.assertTrue(GhostexBackNavigationPolicy.shouldExit(10_000L, 15_000L));
-        Assert.assertTrue(GhostexBackNavigationPolicy.shouldExit(10_000L, 12_000L));
+        Assert.assertFalse(GhostexBackNavigationPolicy.shouldExit(10_000L, 15_000L));
+        Assert.assertFalse(GhostexBackNavigationPolicy.shouldExit(10_000L, 12_000L));
     }
 
 }

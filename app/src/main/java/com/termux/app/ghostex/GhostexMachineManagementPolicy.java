@@ -51,8 +51,8 @@ public final class GhostexMachineManagementPolicy {
     CDXC:AndroidConnectionManagement 2026-05-17-15:23:
     Stable machine ids survive host/user/port edits. A machine-scoped dialog
     opened before that edit should expire unless the saved target still matches,
-    otherwise old recovery UI can save credentials or reset known_hosts for the
-    wrong Mac under the edited account.
+    otherwise old recovery UI can save credentials or reset the saved SSHJ host
+    key for the wrong Mac under the edited account.
     */
     public static boolean canRunExistingMachineAction(boolean machineStillExistsAndTargetMatches) {
         return machineStillExistsAndTargetMatches;

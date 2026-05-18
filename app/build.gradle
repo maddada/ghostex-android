@@ -19,8 +19,13 @@ ext {
     length as `com.termux`; the current bundled bootstrap contains absolute
     prefix strings and can only be patched safely in-place when the replacement
     prefix length is identical.
+
+    CDXC:AndroidBranding 2026-05-18-06:41:
+    The side-by-side runtime id should spell the product as Ghostex. Use
+    `io.ghostex` because it is the same byte length as `com.termux`, keeping
+    bootstrap prefix patching valid while fixing package-visible branding.
     */
-    ghostexRuntimePackageName = stringPropertyOrEnv(project, "ghostexAndroidPackageName", "GHOSTEX_ANDROID_PACKAGE_NAME") ?: "com.ghostx"
+    ghostexRuntimePackageName = stringPropertyOrEnv(project, "ghostexAndroidPackageName", "GHOSTEX_ANDROID_PACKAGE_NAME") ?: "io.ghostex"
 }
 
 def ghostexReleaseSigning = resolveGhostexAndroidReleaseSigning(project)
@@ -48,6 +53,22 @@ android {
         implementation "androidx.viewpager:viewpager:1.0.0"
         implementation "com.google.android.material:material:1.12.0"
         implementation "com.google.guava:guava:24.1-jre"
+        /*
+        CDXC:AndroidSshTransport 2026-05-18-02:56:
+        Play-compliant Ghostex Android cannot depend on Termux `pkg` installing
+        OpenSSH/sshpass/scp into an executable app-private prefix. Use SSHJ for
+        app-owned SSH exec and SFTP transport so remote CLI calls and image
+        uploads work at modern target SDKs without runtime package installs.
+
+        CDXC:AndroidSshTransport 2026-05-18-04:04:
+        Declare bcprov directly because Ghostex replaces Android's platform
+        `BC` provider with the bundled BouncyCastle provider before SSHJ
+        negotiates ECDH; relying only on SSHJ's transitive runtime dependency
+        leaves the provider class unavailable to app source compilation.
+        */
+        implementation "com.hierynomus:sshj:0.40.0"
+        implementation "org.bouncycastle:bcprov-jdk18on:1.80.2"
+        implementation "org.slf4j:slf4j-nop:2.0.17"
         implementation "io.noties.markwon:core:$markwonVersion"
         implementation "io.noties.markwon:ext-strikethrough:$markwonVersion"
         implementation "io.noties.markwon:linkify:$markwonVersion"
@@ -548,7 +569,7 @@ task verifyGhostexBootstrapPrefix() {
         CDXC:AndroidSideBySideInstall 2026-05-17-23:39:
         Until a Ghostex package repository rebuild exists, side-by-side install
         relies on build-local bootstrap archives patched from `com.termux` to
-        the same-length `com.ghostx` app-data root. Verify the embedded native
+        the same-length Ghostex app-data root. Verify the embedded native
         zips point at the runtime package that Android will install.
         */
         def expectedPrefix = "/data/data/" + project.ext.ghostexRuntimePackageName + "/files/usr"
@@ -944,6 +965,24 @@ task verifyGhostexReleaseDrawerSurface() {
         keyboard/screen-reader users can switch, add, edit, or remove machines
         without reopening a modal selector.
 
+        CDXC:AndroidNavigation 2026-05-18-04:43:
+        Android back always opens the Ghostex sidebar and never exits the app.
+        Gate the explicit icon-only drawer exit button beside Machines, the PC
+        icon on Machines, and the header plus button height beside Sessions so
+        navigation stays intentional and compact.
+
+        CDXC:AndroidSidebar 2026-05-18-05:07:
+        Machines is now icon-only, and the per-project New session plus belongs
+        to the sessions list header immediately to the right of the sessions
+        count pill. The Machines page keeps its Add control in the bottom
+        action row with Retry.
+
+        CDXC:AndroidSidebar 2026-05-18-06:51:
+        The sessions header should use the short Ghostex title, expose Refresh
+        immediately left of Machines, use a real vertical-more icon for project
+        actions, and keep session-list dividers transparent so button chrome
+        does not appear as #262626 lines between cards.
+
         CDXC:AndroidConnectionManagement 2026-05-17-21:05:
         Successful reconnects should refresh only the current machine record's
         Last Connected timestamp. Gate the rebase helper so late SSH callbacks
@@ -1037,6 +1076,17 @@ task verifyGhostexReleaseDrawerSurface() {
             !activityText.contains("findViewById(R.id.ghostex_open_tailscale_button) != null")) {
             violations.add(activityFile.name + ": must detect the Ghostex drawer before wiring upstream drawer buttons")
         }
+        def onBackIndex = activityText.indexOf("public void onBackPressed()")
+        def finishActivityIndex = onBackIndex < 0 ? -1 : activityText.indexOf("public void finishActivityIfNotFinishing()", onBackIndex)
+        def onBackBlock = onBackIndex >= 0 && finishActivityIndex > onBackIndex
+            ? activityText.substring(onBackIndex, finishActivityIndex)
+            : ""
+        if (!onBackBlock.contains("if (isGhostexDrawerLayoutInstalled())") ||
+            !onBackBlock.contains("getDrawer().openDrawer(Gravity.LEFT);") ||
+            onBackBlock.contains("GhostexBackNavigationPolicy.shouldExit") ||
+            onBackBlock.contains("finishActivityIfNotFinishing();\n                return;")) {
+            violations.add(activityFile.name + ": Ghostex back navigation must always open the sidebar and never exit the app")
+        }
         def settingsBinderIndex = activityText.indexOf("private void setSettingsButtonView()")
         def newSessionBinderIndex = activityText.indexOf("private void setNewSessionButtonView()")
         def toggleKeyboardBinderIndex = activityText.indexOf("private void setToggleKeyboardView()")
@@ -1088,11 +1138,15 @@ task verifyGhostexReleaseDrawerSurface() {
 
         def ghostexDrawerFile = new File(projectDir, "src/main/res/layout/view_ghostex_drawer.xml")
         def ghostexDrawerText = ghostexDrawerFile.getText("UTF-8")
+        def stringsFile = new File(projectDir, "src/main/res/values/strings.xml")
+        def stringsText = stringsFile.getText("UTF-8")
         [
             "android:id=\"@+id/left_drawer\"",
             "android:id=\"@+id/ghostex_sessions_page\"",
             "android:id=\"@+id/ghostex_machines_page\"",
+            "android:id=\"@+id/ghostex_refresh_sessions_button\"",
             "android:id=\"@+id/ghostex_open_machines_page_button\"",
+            "android:id=\"@+id/ghostex_exit_app_button\"",
             "android:id=\"@+id/ghostex_back_to_sessions_button\"",
             "android:id=\"@+id/ghostex_machines_page_list\"",
             "android:id=\"@+id/terminal_sessions_list\"",
@@ -1109,7 +1163,10 @@ task verifyGhostexReleaseDrawerSurface() {
             violations.add(ghostexDrawerFile.name + ": keyboard toggle belongs in the floating terminal button, not the drawer")
         }
         if (!ghostexDrawerText.contains("android:text=\"@string/ghostex_drawer_title\"")) {
-            violations.add(ghostexDrawerFile.name + ": drawer title must use Ghostex Android branding resource")
+            violations.add(ghostexDrawerFile.name + ": drawer title must use the Ghostex branding resource")
+        }
+        if (!stringsText.contains("<string name=\"ghostex_drawer_title\">Ghostex</string>")) {
+            violations.add(stringsFile.name + ": drawer title must be the short Ghostex product name")
         }
         def hardcodedDrawerCopy = ghostexDrawerText =~ /android:(text|hint|contentDescription)="(?!@string\/)([^"]+)"/
         hardcodedDrawerCopy.each { match ->
@@ -1120,7 +1177,9 @@ task verifyGhostexReleaseDrawerSurface() {
             return matcher.find() ? matcher.group(0) : ""
         }
         [
+            "ghostex_refresh_sessions_button",
             "ghostex_open_machines_page_button",
+            "ghostex_exit_app_button",
             "ghostex_back_to_sessions_button",
             "ghostex_open_tailscale_button",
             "ghostex_prepare_phone_button",
@@ -1131,12 +1190,98 @@ task verifyGhostexReleaseDrawerSurface() {
                 violations.add(ghostexDrawerFile.name + ": " + controlId + " must keep a 48dp drawer touch target")
             }
         }
+        def refreshButtonTag = drawerTagForId("ghostex_refresh_sessions_button")
+        if (!refreshButtonTag.contains("android:layout_width=\"48dp\"") ||
+            !refreshButtonTag.contains("android:contentDescription=\"@string/ghostex_drawer_refresh_sessions\"") ||
+            !refreshButtonTag.contains("android:text=\"\"") ||
+            !refreshButtonTag.contains("app:icon=\"@drawable/ic_ghostex_refresh\"")) {
+            violations.add(ghostexDrawerFile.name + ": refresh button must remain an icon-only 48dp drawer action left of Machines")
+        }
+        if (!new File(projectDir, "src/main/res/drawable/ic_ghostex_refresh.xml").isFile()) {
+            violations.add("missing ic_ghostex_refresh.xml")
+        }
+        def machinesButtonTag = drawerTagForId("ghostex_open_machines_page_button")
+        if (!machinesButtonTag.contains("android:layout_width=\"48dp\"") ||
+            !machinesButtonTag.contains("android:layout_marginStart=\"8dp\"") ||
+            !machinesButtonTag.contains("android:contentDescription=\"@string/ghostex_drawer_machines\"") ||
+            !machinesButtonTag.contains("android:text=\"\"") ||
+            !machinesButtonTag.contains("app:icon=\"@drawable/ic_ghostex_pc\"")) {
+            violations.add(ghostexDrawerFile.name + ": Machines button must remain an icon-only PC drawer action")
+        }
+        if (!ghostexDrawerText.contains("android:divider=\"@android:color/transparent\"") ||
+            !ghostexDrawerText.contains("android:background=\"@color/ghostex_sidebar_background\"")) {
+            violations.add(ghostexDrawerFile.name + ": session-list dividers must stay transparent over the #181818 sidebar background")
+        }
+        def exitButtonTag = drawerTagForId("ghostex_exit_app_button")
+        if (!exitButtonTag.contains("android:layout_width=\"48dp\"") ||
+            !exitButtonTag.contains("android:contentDescription=\"@string/ghostex_drawer_exit_app\"") ||
+            !exitButtonTag.contains("android:text=\"\"") ||
+            !exitButtonTag.contains("app:icon=\"@drawable/ic_ghostex_exit\"")) {
+            violations.add(ghostexDrawerFile.name + ": exit button must remain an icon-only 48dp drawer action")
+        }
+        def addMachineButtonTag = drawerTagForId("new_session_button")
+        if (!addMachineButtonTag.contains("android:layout_width=\"0dp\"") ||
+            !addMachineButtonTag.contains("android:layout_height=\"48dp\"") ||
+            !addMachineButtonTag.contains("android:text=\"@string/ghostex_drawer_add\"")) {
+            violations.add(ghostexDrawerFile.name + ": add-machine button must stay in the Machines page bottom action row")
+        }
 
         def controllerFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexAndroidController.java")
         def controllerText = controllerFile.getText("UTF-8")
+        if (!controllerText.contains("R.id.ghostex_exit_app_button") ||
+            !controllerText.contains("activity.finishActivityIfNotFinishing()")) {
+            violations.add(controllerFile.name + ": explicit drawer exit button must be wired to app exit")
+        }
+        if (!controllerText.contains("R.id.ghostex_refresh_sessions_button") ||
+            !controllerText.contains("refreshSessionsButton.setOnClickListener(v -> reconnectLastMachine(false))")) {
+            violations.add(controllerFile.name + ": sidebar refresh button must reload sessions through reconnect")
+        }
+        if (!controllerText.contains("DRAWER_SESSION_POLL_MS = 4_000L") ||
+            !controllerText.contains("DrawerLayout.SimpleDrawerListener") ||
+            !controllerText.contains("refreshSessionInventoryFromDrawerPoll();") ||
+            !controllerText.contains("scheduleDrawerSessionPolling();") ||
+            !controllerText.contains("drawerSessionPollGeneration") ||
+            !controllerText.contains("drawerSessionPollInFlight") ||
+            !controllerText.contains("handleDrawerPollInventoryResult")) {
+            violations.add(controllerFile.name + ": sessions sidebar must refresh on drawer open and poll every 4 seconds without reusing action generations")
+        }
         if (!controllerText.contains("row.setContentDescription(GhostexAccessibilityCopy.join(action.label, action.detail") ||
             !controllerText.contains("Destructive action. Tap to run.")) {
             violations.add(controllerFile.name + ": action-sheet rows must keep composed accessibility descriptions")
+        }
+        def sessionAdapterFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexRemoteSessionAdapter.java")
+        def sessionAdapterText = sessionAdapterFile.getText("UTF-8")
+        def countIndex = sessionAdapterText.indexOf("count.setTag(\"projectCount\")")
+        def createIndex = sessionAdapterText.indexOf("create.setTag(\"projectCreate\")")
+        def actionsIndex = sessionAdapterText.indexOf("actions.setTag(\"projectActions\")")
+        if (countIndex < 0 || createIndex < countIndex || actionsIndex < createIndex ||
+            !sessionAdapterText.contains("title.setTextSize(15)") ||
+            !sessionAdapterText.contains("count.setTextSize(13)") ||
+            !sessionAdapterText.contains("create.setTextSize(15)") ||
+            !sessionAdapterText.contains("new LinearLayout.LayoutParams(dp(context, 32), dp(context, 32))") ||
+            !sessionAdapterText.contains("actions.setPadding(dp(context, 10), dp(context, 8), dp(context, 10), dp(context, 8))") ||
+            !sessionAdapterText.contains("createParams.setMarginStart(dp(context, 6));") ||
+            !sessionAdapterText.contains("ImageButton actions = new ImageButton(context)") ||
+            !sessionAdapterText.contains("actions.setImageResource(R.drawable.ic_ghostex_more_vertical)") ||
+            !sessionAdapterText.contains("projectActionsListener.onOpenProjectActions(item)") ||
+            !sessionAdapterText.contains("setOnProjectToggleListener") ||
+            !sessionAdapterText.contains("projectToggleListener.onToggleProject(item)")) {
+            violations.add(sessionAdapterFile.name + ": project header title/count/plus must share 32dp height, vertical dots must stay smaller, and header taps must toggle collapse")
+        }
+        if (!new File(projectDir, "src/main/res/drawable/ic_ghostex_more_vertical.xml").isFile()) {
+            violations.add("missing ic_ghostex_more_vertical.xml")
+        }
+        if (!controllerText.contains("setOnProjectActionsListener") ||
+            !controllerText.contains("showProjectContextMenu(item, machineStore.getLastMachine())")) {
+            violations.add(controllerFile.name + ": project overflow button must open the existing project action sheet")
+        }
+        if (!controllerText.contains("collapsedProjectKeys") ||
+            !controllerText.contains("GhostexDrawerItem.buildItems(remoteSessions, collapsedProjectKeys)") ||
+            !controllerText.contains("toggleProjectCollapsed") ||
+            !controllerText.contains("Move project up") ||
+            !controllerText.contains("Move project down") ||
+            !controllerText.contains("inventoryClient.moveProject")) {
+            violations.add(controllerFile.name + ": project headers must collapse locally and project move actions must run through the Mac CLI")
         }
         if (!controllerText.contains("restoreWarmAttachSessionsFromService();") ||
             !controllerText.contains("GhostexWarmSessionMetadata.buildAttachCommandLabel") ||
@@ -2100,7 +2245,7 @@ task verifyGhostexReleaseRepoDocs() {
             violations.add("README.md is missing")
         } else {
             def readmeText = readme.getText("UTF-8")
-            ["# Ghostex Android", "Tailscale SSH", "Ghostex CLI", "ZMX", "termux/termux-app", "npm run android:verify-release", "npm run android:verify-release:local", "GHOSTEX_ANDROID_REQUIRE_RELEASE_SIGNING=1", "GHOSTEX_ANDROID_SIGNING_STORE_FILE", "GHOSTEX_ANDROID_CONFIRM_CLEAR_DATA", "GHOSTEX_ANDROID_UI_SMOKE_BUILD=release", "GHOSTEX_ANDROID_UI_SMOKE_APK", "com.ghostx", "side-by-side", "installs/verifies phone-side OpenSSH", ":app:verifyGhostexReleaseChecksums", "SHA256SUMS", "signature verification", "not final release proof"].each { required ->
+            ["# Ghostex Android", "Tailscale SSH", "Ghostex CLI", "ZMX", "termux/termux-app", "npm run android:verify-release", "npm run android:verify-release:local", "GHOSTEX_ANDROID_REQUIRE_RELEASE_SIGNING=1", "GHOSTEX_ANDROID_SIGNING_STORE_FILE", "GHOSTEX_ANDROID_CONFIRM_CLEAR_DATA", "GHOSTEX_ANDROID_UI_SMOKE_BUILD=release", "GHOSTEX_ANDROID_UI_SMOKE_APK", "io.ghostex", "side-by-side", "uses the app-owned SSHJ transport", ":app:verifyGhostexReleaseChecksums", "SHA256SUMS", "signature verification", "not final release proof"].each { required ->
                 if (!readmeText.contains(required)) violations.add("README.md missing " + required)
             }
             if (readmeText.startsWith("# Termux application")) {

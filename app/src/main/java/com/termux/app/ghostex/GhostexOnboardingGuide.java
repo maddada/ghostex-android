@@ -12,8 +12,8 @@ public final class GhostexOnboardingGuide {
     dialog copy. Keep the title, connection model, and exact setup steps in a
     small helper so Android and later iOS work can verify the same onboarding
     requirements: Tailscale on both devices, macOS Remote Login, Ghostex CLI,
-    zmx persistence, phone SSH tools, saved machine setup, reconnect, and warm
-    session switching.
+    zmx persistence, built-in SSHJ transport, saved machine setup, reconnect,
+    and warm session switching.
     */
     public static final String TITLE = "Connect to your running Ghostex sessions";
 
@@ -29,7 +29,7 @@ public final class GhostexOnboardingGuide {
         "In Ghostex Settings on the Mac, set Session persistence to zmx. Android only supports zmx for now.",
         "Start Ghostex on the Mac and leave the sessions you want to continue running.",
         "On this phone, install Tailscale, sign in to the same tailnet, and confirm the Mac is reachable.",
-        "In Ghostex Android, tap Setup, then Install SSH tools. This runs: pkg update -y && pkg install -y openssh sshpass. OpenSSH provides the terminal attach path, and sshpass lets saved-password reconnects work before SSH keys are configured.",
+        "In Ghostex Android, use the built-in Setup panel for Tailscale, machine management, tutorial review, and host-key repair. You do not need to install SSH packages on the phone.",
         "Add the Mac in Ghostex Android with a display name, host, username, and SSH port.",
         "Tap Retry or reopen the app. Ghostex Android will reconnect to the last selected machine, show ZMX sessions, and keep your last seven opened sessions warm for fast switching."
     };

@@ -2529,6 +2529,14 @@ public final class TerminalEmulator {
         return mAutoScrollDisabled;
     }
 
+    /*
+    CDXC:AndroidSettings 2026-05-18-10:42:
+    The Ghostex Android sidebar Settings page must set auto-scroll explicitly instead of depending on the extra-keys toggle. Expose a setter so the UI can apply the chosen default to the active emulator without guessing or double-toggling state.
+    */
+    public void setAutoScrollDisabled(boolean disabled) {
+        mAutoScrollDisabled = disabled;
+    }
+
     public void toggleAutoScrollDisabled() {
         mAutoScrollDisabled = !mAutoScrollDisabled;
     }

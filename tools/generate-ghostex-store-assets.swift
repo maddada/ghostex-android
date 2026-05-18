@@ -189,7 +189,7 @@ try screenshot("2.jpg") {
     card(72, 712, 936, 176, title: "Office Mac  |  madda@office.tailnet:22",
          body: "Uses SSH keys, Tailscale SSH, or a session-only password", accent: Palette.working)
     card(72, 934, 936, 152, title: "Check connection",
-         body: "Verify phone SSH tools, SSH reachability, Ghostex CLI, and zmx before switching.")
+         body: "Verify SSH reachability, Ghostex CLI, zmx, and host-key state before switching.")
 }
 
 try screenshot("3.jpg") {

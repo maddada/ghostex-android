@@ -13,6 +13,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
@@ -75,6 +76,7 @@ public final class TerminalSession extends TerminalOutput {
     private final String[] mArgs;
     private final String[] mEnv;
     private final Integer mTranscriptRows;
+    private final ExternalTerminalProcess mExternalProcess;
 
 
     private static final String LOG_TAG = "TerminalSession";
@@ -86,6 +88,59 @@ public final class TerminalSession extends TerminalOutput {
         this.mEnv = env;
         this.mTranscriptRows = transcriptRows;
         this.mClient = client;
+        this.mExternalProcess = null;
+    }
+
+    /*
+    CDXC:AndroidRemoteAttach 2026-05-18-04:46:
+    Ghostex Android remote attach must render an interactive Mac-side PTY
+    without executing Termux-installed ssh or sshpass binaries from app-private
+    storage, because modern target SDKs block that execution path. Keep this
+    as a small alternate process source so normal Termux local sessions still
+    use the original JNI subprocess path unchanged.
+
+    CDXC:AndroidRemoteAttach 2026-05-18-05:08:
+    Starting the remote SSH PTY can involve Tailscale and password auth latency.
+    Run external process startup off the UI thread so tapping a session cannot
+    freeze the terminal view while the network connection is established.
+    */
+    public TerminalSession(ExternalTerminalProcess externalProcess, Integer transcriptRows, TerminalSessionClient client) {
+        this.mShellPath = null;
+        this.mCwd = null;
+        this.mArgs = null;
+        this.mEnv = null;
+        this.mTranscriptRows = transcriptRows;
+        this.mClient = client;
+        this.mExternalProcess = externalProcess;
+    }
+
+    public interface ExternalTerminalProcess {
+        void start(int columns, int rows, int cellWidthPixels, int cellHeightPixels) throws Exception;
+
+        InputStream getInputStream() throws Exception;
+
+        OutputStream getOutputStream() throws Exception;
+
+        void resize(int columns, int rows, int cellWidthPixels, int cellHeightPixels) throws Exception;
+
+        int waitFor() throws Exception;
+
+        void close() throws Exception;
+
+        /*
+        CDXC:AndroidRemoteAttach 2026-05-18-06:26:
+        Remote SSH attach failures currently surface as a generic process exit
+        after the server closes the transport. Let the app-owned external
+        process observe terminal queue/input/waiter pressure without importing
+        Ghostex app logging into the reusable terminal-emulator module.
+        */
+        default void onProcessOutput(int bytesRead, long queueWriteMs, boolean queued) {}
+
+        default void onTerminalInput(int bytesToWrite) {}
+
+        default void onExternalProcessExit(int exitCode) {}
+
+        default void onExternalProcessWaitFailed(Exception error) {}
     }
 
     /**
@@ -103,6 +158,13 @@ public final class TerminalSession extends TerminalOutput {
     public void updateSize(int columns, int rows, int cellWidthPixels, int cellHeightPixels) {
         if (mEmulator == null) {
             initializeEmulator(columns, rows, cellWidthPixels, cellHeightPixels);
+        } else if (mExternalProcess != null) {
+            try {
+                mExternalProcess.resize(columns, rows, cellWidthPixels, cellHeightPixels);
+            } catch (Exception e) {
+                Logger.logWarn(mClient, LOG_TAG, "Failed resizing external terminal process: " + e.getMessage());
+            }
+            mEmulator.resize(columns, rows, cellWidthPixels, cellHeightPixels);
         } else {
             JNI.setPtyWindowSize(mTerminalFileDescriptor, rows, columns, cellWidthPixels, cellHeightPixels);
             mEmulator.resize(columns, rows, cellWidthPixels, cellHeightPixels);
@@ -123,6 +185,11 @@ public final class TerminalSession extends TerminalOutput {
     public void initializeEmulator(int columns, int rows, int cellWidthPixels, int cellHeightPixels) {
         mEmulator = new TerminalEmulator(this, columns, rows, cellWidthPixels, cellHeightPixels, mTranscriptRows, mClient);
 
+        if (mExternalProcess != null) {
+            initializeExternalProcess(columns, rows, cellWidthPixels, cellHeightPixels);
+            return;
+        }
+
         int[] processId = new int[1];
         mTerminalFileDescriptor = JNI.createSubprocess(mShellPath, mCwd, mArgs, mEnv, processId, rows, columns, cellWidthPixels, cellHeightPixels);
         mShellPid = processId[0];
@@ -138,7 +205,10 @@ public final class TerminalSession extends TerminalOutput {
                     while (true) {
                         int read = termIn.read(buffer);
                         if (read == -1) return;
-                        if (!mProcessToTerminalIOQueue.write(buffer, 0, read)) return;
+                        long queueStartMs = System.currentTimeMillis();
+                        boolean queued = mProcessToTerminalIOQueue.write(buffer, 0, read);
+                        mExternalProcess.onProcessOutput(read, System.currentTimeMillis() - queueStartMs, queued);
+                        if (!queued) return;
                         mMainThreadHandler.sendEmptyMessage(MSG_NEW_INPUT);
                     }
                 } catch (Exception e) {
@@ -171,6 +241,80 @@ public final class TerminalSession extends TerminalOutput {
             }
         }.start();
 
+    }
+
+    private void initializeExternalProcess(int columns, int rows, int cellWidthPixels, int cellHeightPixels) {
+        mShellPid = 1;
+        mClient.setTerminalShellPid(this, mShellPid);
+
+        new Thread("TermSessionExternalStarter") {
+            @Override
+            public void run() {
+                try {
+                    mExternalProcess.start(columns, rows, cellWidthPixels, cellHeightPixels);
+                    startExternalProcessIOThreads();
+                } catch (Exception e) {
+                    String message = "\r\nGhostex remote attach failed: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()) + "\r\n";
+                    byte[] bytes = message.getBytes(StandardCharsets.UTF_8);
+                    mProcessToTerminalIOQueue.write(bytes, 0, bytes.length);
+                    mMainThreadHandler.sendMessage(mMainThreadHandler.obtainMessage(MSG_PROCESS_EXITED, 1));
+                }
+            }
+        }.start();
+    }
+
+    private void startExternalProcessIOThreads() {
+        new Thread("TermSessionExternalInputReader") {
+            @Override
+            public void run() {
+                try (InputStream termIn = mExternalProcess.getInputStream()) {
+                    final byte[] buffer = new byte[4096];
+                    while (true) {
+                        int read = termIn.read(buffer);
+                        if (read == -1) return;
+                        if (!mProcessToTerminalIOQueue.write(buffer, 0, read)) return;
+                        mMainThreadHandler.sendEmptyMessage(MSG_NEW_INPUT);
+                    }
+                } catch (Exception e) {
+                    // Ignore, just shutting down.
+                }
+            }
+        }.start();
+
+        new Thread("TermSessionExternalOutputWriter") {
+            @Override
+            public void run() {
+                final byte[] buffer = new byte[4096];
+                try (OutputStream termOut = mExternalProcess.getOutputStream()) {
+                    while (true) {
+                        int bytesToWrite = mTerminalToProcessIOQueue.read(buffer, true);
+                        if (bytesToWrite == -1) return;
+                        mExternalProcess.onTerminalInput(bytesToWrite);
+                        termOut.write(buffer, 0, bytesToWrite);
+                        termOut.flush();
+                    }
+                } catch (IOException e) {
+                    // Ignore.
+                } catch (Exception e) {
+                    Logger.logWarn(mClient, LOG_TAG, "External terminal output writer failed: " + e.getMessage());
+                }
+            }
+        }.start();
+
+        new Thread("TermSessionExternalWaiter") {
+            @Override
+            public void run() {
+                int processExitCode;
+                try {
+                    processExitCode = mExternalProcess.waitFor();
+                } catch (Exception e) {
+                    mExternalProcess.onExternalProcessWaitFailed(e);
+                    processExitCode = 1;
+                }
+                mExternalProcess.onExternalProcessExit(processExitCode);
+                mMainThreadHandler.sendMessage(mMainThreadHandler.obtainMessage(MSG_PROCESS_EXITED, processExitCode));
+            }
+        }.start();
     }
 
     /** Write data to the shell process. */
@@ -234,6 +378,14 @@ public final class TerminalSession extends TerminalOutput {
     /** Finish this terminal session by sending SIGKILL to the shell. */
     public void finishIfRunning() {
         if (isRunning()) {
+            if (mExternalProcess != null) {
+                try {
+                    mExternalProcess.close();
+                } catch (Exception e) {
+                    Logger.logWarn(mClient, LOG_TAG, "Failed closing external terminal process: " + e.getMessage());
+                }
+                return;
+            }
             try {
                 Os.kill(mShellPid, OsConstants.SIGKILL);
             } catch (ErrnoException e) {
@@ -252,7 +404,15 @@ public final class TerminalSession extends TerminalOutput {
         // Stop the reader and writer threads, and close the I/O streams
         mTerminalToProcessIOQueue.close();
         mProcessToTerminalIOQueue.close();
-        JNI.close(mTerminalFileDescriptor);
+        if (mExternalProcess != null) {
+            try {
+                mExternalProcess.close();
+            } catch (Exception e) {
+                Logger.logWarn(mClient, LOG_TAG, "Failed cleaning up external terminal process: " + e.getMessage());
+            }
+        } else {
+            JNI.close(mTerminalFileDescriptor);
+        }
     }
 
     @Override
@@ -295,6 +455,7 @@ public final class TerminalSession extends TerminalOutput {
 
     /** Returns the shell's working directory or null if it was unavailable. */
     public String getCwd() {
+        if (mExternalProcess != null) return null;
         if (mShellPid < 1) {
             return null;
         }

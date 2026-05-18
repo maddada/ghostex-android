@@ -145,7 +145,7 @@ public final class GhostexSessionInventoryClientTest {
         String message = GhostexSessionInventoryClient.summarizeFailure(
             "Host key verification failed.", false);
 
-        Assert.assertEquals("SSH host key verification failed. Open Setup and remove the old known_hosts entry for this machine, or confirm you are connecting to the right Mac.", message);
+        Assert.assertEquals("SSH host key verification failed. Open Setup and reset this phone's saved host key for the machine, or confirm you are connecting to the right Mac.", message);
     }
 
     @Test

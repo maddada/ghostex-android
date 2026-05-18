@@ -46,6 +46,20 @@ public class TermuxSession {
         this.mSetStdoutOnExit = setStdoutOnExit;
     }
 
+    /*
+    CDXC:AndroidRemoteAttach 2026-05-18-04:57:
+    Ghostex remote attach sessions are backed by an SSHJ PTY instead of a local
+    Termux subprocess, but they still need to live in Termux's session list so
+    switching, notifications, warm-session reuse, and normal cleanup semantics
+    remain aligned with local terminal sessions.
+    */
+    public static TermuxSession wrapTerminalSession(@NonNull final TerminalSession terminalSession,
+                                                    @NonNull final ExecutionCommand executionCommand,
+                                                    final TermuxSessionClient termuxSessionClient,
+                                                    final boolean setStdoutOnExit) {
+        return new TermuxSession(terminalSession, executionCommand, termuxSessionClient, setStdoutOnExit);
+    }
+
     /**
      * Start execution of an {@link ExecutionCommand} with {@link Runtime#exec(String[], String[], File)}.
      *

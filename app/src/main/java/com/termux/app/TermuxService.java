@@ -19,6 +19,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.termux.R;
+import com.termux.app.ghostex.GhostexFileLogger;
 import com.termux.app.ghostex.GhostexServiceNotificationFormatter;
 import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
 import com.termux.app.terminal.TermuxTerminalSessionServiceClient;
@@ -644,6 +645,49 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         updateNotification();
 
         // No need to recreate the activity since it likely just started and theme should already have applied
+        TermuxActivity.updateTermuxActivityStyling(this, false);
+
+        return newTermuxSession;
+    }
+
+    /** Create a Termux-listed terminal session backed by an external process source. */
+    @Nullable
+    public synchronized TermuxSession createExternalTerminalSession(@NonNull TerminalSession.ExternalTerminalProcess externalProcess,
+                                                                    @NonNull String sessionName,
+                                                                    @NonNull String commandLabel,
+                                                                    @NonNull String sessionLogTag) {
+        ExecutionCommand executionCommand = new ExecutionCommand(TermuxShellManager.getNextShellId(),
+            null, null, null, mProperties.getDefaultWorkingDirectory(), Runner.TERMINAL_SESSION.getName(), false);
+        executionCommand.shellName = sessionName;
+        executionCommand.commandLabel = commandLabel;
+        executionCommand.terminalTranscriptRows = mProperties.getTerminalTranscriptRows();
+
+        if (!executionCommand.setState(ExecutionCommand.ExecutionState.EXECUTING)) {
+            Logger.logError(LOG_TAG, "Failed to mark external terminal session as executing for " + commandLabel);
+            return null;
+        }
+
+        /*
+        CDXC:AndroidRemoteAttach 2026-05-18-05:00:
+        Register SSHJ-backed Ghostex attach terminals through the normal Termux
+        session collection instead of keeping them only in the Ghostex sidebar
+        cache. This preserves drawer switching, service lifetime, notification,
+        and finished-session cleanup while the actual I/O source remains
+        modular and app-owned.
+        */
+        TerminalSession terminalSession = new TerminalSession(externalProcess,
+            executionCommand.terminalTranscriptRows, getTermuxTerminalSessionClient());
+        terminalSession.mSessionName = sessionName;
+        TermuxSession newTermuxSession = TermuxSession.wrapTerminalSession(terminalSession, executionCommand,
+            this, executionCommand.isPluginExecutionCommand);
+        mShellManager.mTermuxSessions.add(newTermuxSession);
+        GhostexFileLogger.log(this, "service", sessionLogTag, "registered external terminal session name=" + sessionName +
+            " commandLabel=" + commandLabel + " handle=" + terminalSession.mHandle);
+
+        if (mTermuxTerminalSessionActivityClient != null)
+            mTermuxTerminalSessionActivityClient.termuxSessionListNotifyUpdated();
+
+        updateNotification();
         TermuxActivity.updateTermuxActivityStyling(this, false);
 
         return newTermuxSession;

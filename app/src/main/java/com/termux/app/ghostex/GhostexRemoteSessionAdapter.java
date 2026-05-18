@@ -9,11 +9,15 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
+import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+
+import com.termux.R;
 
 import java.util.List;
 
@@ -25,9 +29,19 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
     private String currentMachineId;
     private String activeSessionKey;
     private OnProjectSessionCreateListener projectSessionCreateListener;
+    private OnProjectActionsListener projectActionsListener;
+    private OnProjectToggleListener projectToggleListener;
 
     public interface OnProjectSessionCreateListener {
         void onCreateProjectSession(@NonNull GhostexDrawerItem item);
+    }
+
+    public interface OnProjectActionsListener {
+        void onOpenProjectActions(@NonNull GhostexDrawerItem item);
+    }
+
+    public interface OnProjectToggleListener {
+        void onToggleProject(@NonNull GhostexDrawerItem item);
     }
 
     /*
@@ -39,8 +53,8 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
 
     CDXC:AndroidSidebar 2026-05-17-10:43:
     The adapter now renders both project headers and session rows so Android
-    carries the same grouped sidebar hierarchy and long-press target types as
-    the macOS sidebar instead of flattening every ZMX session.
+    carries the same grouped sidebar hierarchy and row action targets as the
+    macOS sidebar instead of flattening every ZMX session.
 
     CDXC:AndroidConnectionManagement 2026-05-17-13:02:
     Drawer state cards turn reconnect, setup, no-session, and failure states
@@ -84,6 +98,27 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
     session count. The button must route through the Mac Ghostex CLI so the
     main app creates the terminal and applies its current zmx persistence
     setting instead of Android opening a local Termux session.
+
+    CDXC:AndroidSidebar 2026-05-18-05:18:
+    Project actions should not depend on long-press discovery now that the
+    project header has an inline New session button. Keep a three-dot button to
+    the right of `+` that opens the same project action sheet directly.
+
+    CDXC:AndroidSidebar 2026-05-18-06:51:
+    The project action affordance should render as a real vertical-more icon,
+    not the literal text `...`, so the header reads as native mobile controls
+    beside the existing plus button.
+
+    CDXC:AndroidSidebar 2026-05-18-16:13:
+    The project title, session-count pill, and plus button should share an exact
+    32dp header height so they read as one control row. Keep the overflow button
+    the same touch height but shrink its icon with padding so project actions are
+    secondary to title, count, and session creation.
+
+    CDXC:AndroidSidebar 2026-05-18-16:13:
+    Tapping the project header toggles expanded/collapsed state. Inline plus and
+    vertical-more buttons remain separate click targets, so project disclosure
+    does not steal create-session or overflow actions.
     */
     public GhostexRemoteSessionAdapter(@NonNull Context context,
                                        @NonNull List<GhostexDrawerItem> items) {
@@ -92,6 +127,14 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
 
     public void setOnProjectSessionCreateListener(@Nullable OnProjectSessionCreateListener listener) {
         projectSessionCreateListener = listener;
+    }
+
+    public void setOnProjectActionsListener(@Nullable OnProjectActionsListener listener) {
+        projectActionsListener = listener;
+    }
+
+    public void setOnProjectToggleListener(@Nullable OnProjectToggleListener listener) {
+        projectToggleListener = listener;
     }
 
     public void setCurrentMachineId(@Nullable String value) {
@@ -183,16 +226,30 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         TextView title = (TextView) row.findViewWithTag("projectTitle");
         TextView count = (TextView) row.findViewWithTag("projectCount");
         TextView create = (TextView) row.findViewWithTag("projectCreate");
+        ImageButton actions = (ImageButton) row.findViewWithTag("projectActions");
         title.setText(item.projectTitle);
         String summary = buildProjectSummary(item);
         count.setText(summary);
+        row.setOnClickListener(view -> {
+            if (projectToggleListener != null) {
+                projectToggleListener.onToggleProject(item);
+            }
+        });
         create.setContentDescription("Create a session in " + item.projectTitle);
         create.setOnClickListener(view -> {
             if (projectSessionCreateListener != null) {
                 projectSessionCreateListener.onCreateProjectSession(item);
             }
         });
-        row.setContentDescription(GhostexAccessibilityCopy.join(item.projectTitle, summary, "Long press for project actions."));
+        actions.setContentDescription("Open project actions for " + item.projectTitle);
+        actions.setOnClickListener(view -> {
+            if (projectActionsListener != null) {
+                projectActionsListener.onOpenProjectActions(item);
+            }
+        });
+        row.setContentDescription(GhostexAccessibilityCopy.join(item.projectTitle, summary,
+            item.collapsed ? "Tap to expand. Use plus to create a session. Use more for project actions."
+                : "Tap to collapse. Use plus to create a session. Use more for project actions."));
         return row;
     }
 
@@ -225,45 +282,81 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
     }
 
     private LinearLayout createProjectHeader(@NonNull ViewGroup parent) {
+        /*
+        CDXC:AndroidSidebar 2026-05-18-05:07:
+        The per-project New session action lives in the sessions list header.
+        Keep the plus immediately to the right of the sessions-count pill and
+        size it from the same text/padding recipe so it does not overpower the
+        pill on narrow Android drawers.
+
+        CDXC:AndroidSidebar 2026-05-18-05:18:
+        The project action sheet needs a visible overflow affordance because
+        the inline plus button made long-pressing the project name unreliable
+        and undiscoverable. Place the three-dot button to the right of plus so
+        project creation and project management are adjacent but distinct.
+
+        CDXC:AndroidSidebar 2026-05-18-06:51:
+        Render the overflow affordance with a vector vertical-dots icon instead
+        of text so it remains recognizable as an Android action button at small
+        header sizes.
+        */
         Context context = parent.getContext();
         LinearLayout row = new LinearLayout(context);
         row.setTag("project");
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(context, 6), dp(context, 14), dp(context, 6), dp(context, 6));
-        row.setMinimumHeight(dp(context, 42));
+        row.setMinimumHeight(dp(context, 52));
 
         TextView title = new TextView(context);
         title.setTag("projectTitle");
         title.setTextColor(GhostexPalette.FOREGROUND);
-        title.setTextSize(13);
+        title.setTextSize(15);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.END);
-        row.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        title.setMinHeight(dp(context, 32));
+        row.addView(title, new LinearLayout.LayoutParams(0, dp(context, 32), 1));
+
+        TextView count = new TextView(context);
+        count.setTag("projectCount");
+        count.setTextColor(GhostexPalette.MUTED);
+        count.setTextSize(13);
+        count.setGravity(Gravity.CENTER);
+        count.setMinHeight(dp(context, 32));
+        count.setPadding(dp(context, 10), 0, dp(context, 10), 0);
+        count.setBackground(pillBackground(context));
+        row.addView(count, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(context, 32)));
 
         TextView create = new TextView(context);
         create.setTag("projectCreate");
         create.setText("+");
         create.setTextColor(GhostexPalette.FOREGROUND);
-        create.setTextSize(16);
+        create.setTextSize(15);
         create.setTypeface(Typeface.DEFAULT_BOLD);
         create.setGravity(Gravity.CENTER);
+        create.setMinHeight(dp(context, 32));
+        create.setPadding(0, 0, 0, dp(context, 1));
         create.setBackground(pillBackground(context));
         create.setClickable(true);
         create.setFocusable(true);
-        LinearLayout.LayoutParams createParams = new LinearLayout.LayoutParams(dp(context, 30), dp(context, 30));
-        createParams.setMarginEnd(dp(context, 6));
+        LinearLayout.LayoutParams createParams = new LinearLayout.LayoutParams(dp(context, 32), dp(context, 32));
+        createParams.setMarginStart(dp(context, 6));
         row.addView(create, createParams);
 
-        TextView count = new TextView(context);
-        count.setTag("projectCount");
-        count.setTextColor(GhostexPalette.MUTED);
-        count.setTextSize(11);
-        count.setGravity(Gravity.CENTER);
-        count.setPadding(dp(context, 8), dp(context, 3), dp(context, 8), dp(context, 3));
-        count.setBackground(pillBackground(context));
-        row.addView(count, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        ImageButton actions = new ImageButton(context);
+        actions.setTag("projectActions");
+        actions.setImageResource(R.drawable.ic_ghostex_more_vertical);
+        actions.setColorFilter(GhostexPalette.FOREGROUND);
+        actions.setScaleType(ImageView.ScaleType.CENTER);
+        actions.setPadding(dp(context, 10), dp(context, 8), dp(context, 10), dp(context, 8));
+        actions.setBackground(pillBackground(context));
+        actions.setClickable(true);
+        actions.setFocusable(true);
+        LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(dp(context, 32), dp(context, 32));
+        actionsParams.setMarginStart(dp(context, 6));
+        row.addView(actions, actionsParams);
         return row;
     }
 

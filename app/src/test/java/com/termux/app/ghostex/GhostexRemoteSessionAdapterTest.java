@@ -3,7 +3,9 @@ package com.termux.app.ghostex;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.TextView;
 
 import org.json.JSONObject;
@@ -23,11 +25,25 @@ public final class GhostexRemoteSessionAdapterTest {
     CDXC:AndroidSidebar 2026-05-17-18:38:
     The remote drawer is the primary Android navigation surface. Its clickable
     state, project, and session rows need composed accessibility descriptions
-    that explain the target and available tap/long-press action.
+    that explain the target and available tap, overflow, or long-press action.
 
     CDXC:AndroidSidebar 2026-05-18-02:31:
-    Project headers expose a plus button immediately before the session-count
+    Project headers expose a plus button immediately after the session-count
     pill so Android can create a Mac-side Ghostex terminal in that group.
+
+    CDXC:AndroidSidebar 2026-05-18-05:18:
+    Project headers expose a three-dot action button to the right of the plus
+    button because project menus should be visible and tap-driven instead of
+    depending on long-pressing the project name.
+
+    CDXC:AndroidSidebar 2026-05-18-06:51:
+    The project actions button should use the vertical-dots icon drawable, not
+    a literal `...` label, so tests pin the control type and drawable presence.
+
+    CDXC:AndroidSidebar 2026-05-18-16:13:
+    Project headers are disclosure rows. The title, session count, and plus
+    controls must share one exact 32dp height while the vertical-dots icon is
+    visually smaller inside the same button height.
     */
     @Test
     public void stateCardHasRecoveryContentDescription() {
@@ -49,22 +65,31 @@ public final class GhostexRemoteSessionAdapterTest {
 
         View view = adapter.getView(0, null, new FrameLayout(RuntimeEnvironment.getApplication()));
 
-        Assert.assertEquals("Ghostex. 1 working · 2 sessions. Long press for project actions.",
+        Assert.assertEquals("Ghostex. 1 working · 2 sessions. Tap to collapse. Use plus to create a session. Use more for project actions.",
             view.getContentDescription().toString());
     }
 
     @Test
-    public void projectHeaderHasCreateButtonBeforeCountPill() {
+    public void projectHeaderHasCountCreateAndActionsButtonsInOrder() {
         GhostexRemoteSessionAdapter adapter = adapterForSessions();
 
         View view = adapter.getView(0, null, new FrameLayout(RuntimeEnvironment.getApplication()));
         TextView create = view.findViewWithTag("projectCreate");
         TextView count = view.findViewWithTag("projectCount");
+        ImageButton actions = view.findViewWithTag("projectActions");
 
         Assert.assertEquals("+", create.getText().toString());
+        Assert.assertNotNull(actions.getDrawable());
         Assert.assertEquals("Create a session in Ghostex", create.getContentDescription().toString());
+        Assert.assertEquals("Open project actions for Ghostex", actions.getContentDescription().toString());
+        Assert.assertEquals(dp(32), create.getLayoutParams().height);
+        Assert.assertEquals(dp(32), count.getLayoutParams().height);
+        Assert.assertEquals(dp(32), actions.getLayoutParams().height);
+        Assert.assertEquals(dp(10), actions.getPaddingLeft());
+        Assert.assertTrue(((android.view.ViewGroup) view).indexOfChild(count) <
+            ((android.view.ViewGroup) view).indexOfChild(create));
         Assert.assertTrue(((android.view.ViewGroup) view).indexOfChild(create) <
-            ((android.view.ViewGroup) view).indexOfChild(count));
+            ((android.view.ViewGroup) view).indexOfChild(actions));
     }
 
     @Test
@@ -75,6 +100,32 @@ public final class GhostexRemoteSessionAdapterTest {
         View view = adapter.getView(0, null, new FrameLayout(RuntimeEnvironment.getApplication()));
 
         view.findViewWithTag("projectCreate").performClick();
+
+        Assert.assertNotNull(clickedItem[0]);
+        Assert.assertEquals("project-1", clickedItem[0].projectId);
+    }
+
+    @Test
+    public void projectHeaderActionsButtonInvokesListener() {
+        GhostexRemoteSessionAdapter adapter = adapterForSessions();
+        final GhostexDrawerItem[] clickedItem = new GhostexDrawerItem[1];
+        adapter.setOnProjectActionsListener(item -> clickedItem[0] = item);
+        View view = adapter.getView(0, null, new FrameLayout(RuntimeEnvironment.getApplication()));
+
+        view.findViewWithTag("projectActions").performClick();
+
+        Assert.assertNotNull(clickedItem[0]);
+        Assert.assertEquals("project-1", clickedItem[0].projectId);
+    }
+
+    @Test
+    public void projectHeaderClickInvokesToggleListener() {
+        GhostexRemoteSessionAdapter adapter = adapterForSessions();
+        final GhostexDrawerItem[] clickedItem = new GhostexDrawerItem[1];
+        adapter.setOnProjectToggleListener(item -> clickedItem[0] = item);
+        View view = adapter.getView(0, null, new FrameLayout(RuntimeEnvironment.getApplication()));
+
+        view.performClick();
 
         Assert.assertNotNull(clickedItem[0]);
         Assert.assertEquals("project-1", clickedItem[0].projectId);
@@ -153,6 +204,10 @@ public final class GhostexRemoteSessionAdapterTest {
             "zmx-main", "codex", "2026-05-17T09:00:00Z", false, false));
         List<GhostexDrawerItem> items = GhostexDrawerItem.buildItems(sessions);
         return new GhostexRemoteSessionAdapter(RuntimeEnvironment.getApplication(), items);
+    }
+
+    private int dp(int value) {
+        return Math.round(value * RuntimeEnvironment.getApplication().getResources().getDisplayMetrics().density);
     }
 
 }

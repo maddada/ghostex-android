@@ -14,26 +14,35 @@ import android.os.Looper;
 import android.provider.OpenableColumns;
 import android.text.InputType;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.webkit.MimeTypeMap;
+import android.widget.ArrayAdapter;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.drawerlayout.widget.DrawerLayout;
 
 import com.termux.R;
 import com.termux.app.TermuxActivity;
 import com.termux.app.TermuxService;
-import com.termux.shared.shell.command.ExecutionCommand;
+import com.termux.shared.activity.media.AppCompatActivityUtils;
 import com.termux.shared.logger.Logger;
-import com.termux.shared.termux.shell.TermuxShellManager;
 import com.termux.shared.termux.shell.command.runner.terminal.TermuxSession;
+import com.termux.shared.termux.settings.properties.TermuxPropertyConstants;
+import com.termux.shared.termux.theme.TermuxThemeUtils;
+import com.termux.shared.theme.NightMode;
+import com.termux.terminal.KeyHandler;
+import com.termux.terminal.TerminalEmulator;
 import com.termux.terminal.TerminalSession;
 
 import java.io.File;
@@ -53,6 +62,7 @@ public final class GhostexAndroidController {
     private static final String LOG_TAG = "GhostexAndroid";
     private static final int WARM_SESSION_LIMIT = 7;
     private static final long RESUME_RECONNECT_THROTTLE_MS = 15_000L;
+    private static final long DRAWER_SESSION_POLL_MS = 4_000L;
     private static final int GHOSTEX_BG = GhostexPalette.BACKGROUND;
     private static final int GHOSTEX_PANEL = GhostexPalette.CARD;
     private static final int GHOSTEX_PANEL_ALT = GhostexPalette.INPUT_BACKGROUND;
@@ -66,12 +76,14 @@ public final class GhostexAndroidController {
     private final GhostexMachineStore machineStore;
     private final GhostexPasswordVault passwordVault;
     private final GhostexSessionInventoryClient inventoryClient;
-    private final GhostexImageUploadClient imageUploadClient;
-    private final GhostexPhoneSetup phoneSetup;
+    private final GhostexFileUploadClient fileUploadClient;
+    private final GhostexTerminalSettingsStore terminalSettingsStore;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final Runnable drawerSessionPollRunnable = this::runDrawerSessionPoll;
     private final ArrayList<GhostexRemoteSession> remoteSessions = new ArrayList<>();
     private final ArrayList<GhostexDrawerItem> drawerItems = new ArrayList<>();
+    private final HashSet<String> collapsedProjectKeys = new HashSet<>();
     private final LinkedHashMap<String, TerminalSession> warmSessions =
         new LinkedHashMap<>(WARM_SESSION_LIMIT + 1, 0.75f, true);
     private final HashMap<String, String> sessionPasswords = new HashMap<>();
@@ -79,17 +91,24 @@ public final class GhostexAndroidController {
     private GhostexRemoteSessionAdapter sessionAdapter;
     private TextView statusView;
     private TextView machinesPageStatusView;
+    private TextView settingsPageStatusView;
     private View sessionsPage;
     private View machinesPage;
+    private View settingsPage;
     private LinearLayout machinesPageList;
+    private LinearLayout settingsPageList;
+    private DrawerLayout.DrawerListener drawerSessionPollListener;
     private boolean tutorialShowing;
     private boolean requiredMachineSetupInProgress;
+    private boolean drawerSessionPollInFlight;
     private long lastReconnectAttemptAt;
     private long reconnectGeneration;
+    private long drawerSessionPollGeneration;
     private long machineCheckGeneration;
     private long remoteActionGeneration;
     private long attachGeneration;
     private int imagePasteCount;
+    private int filePasteCount;
     private boolean destroyed;
 
     /*
@@ -116,15 +135,36 @@ public final class GhostexAndroidController {
     can be fixed from the same control without hunting through secondary UI.
 
     CDXC:AndroidSidebar 2026-05-17-10:43:
-    The drawer renders project headers plus session cards, and long-press
-    context menus apply to the touched element type. This ports macOS hover
-    controls to Android touch without exposing Termux's local-session drawer.
+    The drawer renders project headers plus session cards, and row action
+    surfaces apply to the touched element type. This ports macOS hover controls
+    to Android touch without exposing Termux's local-session drawer.
+
+    CDXC:AndroidSidebar 2026-05-18-05:18:
+    Project-level actions must be available through the project header's
+    three-dot button instead of relying on long-pressing the project name. Keep
+    session long-press actions intact while project actions use the visible
+    overflow button next to the per-project plus button.
+
+    CDXC:AndroidSidebar 2026-05-18-06:51:
+    The sessions sidebar header has a dedicated refresh button immediately left
+    of Machines. It reloads the selected machine's ZMX session inventory through
+    the same reconnect path as the Refresh sessions action sheet item.
+
+    CDXC:AndroidRemoteSessions 2026-05-18-08:47:
+    The sessions page should refresh when the drawer opens and then poll every
+    four seconds while it remains visible. Use a separate poll generation so
+    background inventory refreshes do not invalidate attach/session action
+    callbacks that use reconnect, remote-action, or attach generations.
+
+    CDXC:AndroidSidebar 2026-05-18-16:13:
+    Android project headers support tap-to-collapse locally, but project ordering
+    must remain desktop-owned. Rebuild the drawer from the CLI-provided sidebar
+    order and send Move project actions back through the Mac Ghostex CLI.
 
     CDXC:AndroidOnboarding 2026-05-17-10:51:
-    Reconnect should preflight phone-side SSH tooling before remote network
-    work. The drawer exposes a Setup action that can check or install OpenSSH
-    and sshpass in the visible terminal surface instead of making users copy
-    package commands from the tutorial.
+    Reconnect used to preflight phone-side SSH packages, but Ghostex Android now
+    uses app-owned SSHJ/SFTP for all SSH traffic. Keep Setup focused on
+    Tailscale, machine settings, tutorial, and SSHJ host-key repair.
 
     CDXC:AndroidConnectionSecurity 2026-05-17-11:17:
     Passwords entered without Save password checked are session-only secrets.
@@ -215,16 +255,17 @@ public final class GhostexAndroidController {
     for successful lifecycle-changing rows and refresh the drawer even when a
     later row fails, so Android does not keep stale ZMX attach surfaces.
 
-    CDXC:AndroidOnboarding 2026-05-17-13:52:
-    Cold session attaches need the same phone-side OpenSSH/sshpass preflight as
-    reconnect. If tools disappear after inventory refresh, show the Ghostex
-    setup recovery instead of opening a terminal that can only fail.
+    CDXC:AndroidRemoteAttach 2026-05-18-05:02:
+    Cold session attaches now use the app-owned SSHJ PTY path, matching
+    reconnect, readiness, actions, create, rename, and file upload. Do not
+    preflight or require phone-side SSH packages for attach; all phone-side SSH
+    now stays inside the app-owned SSHJ transport.
 
     CDXC:AndroidConnectionManagement 2026-05-17-14:03:
     Saved-machine action sheets should include a non-destructive Check
-    connection path. Users managing multiple Macs need to verify phone tools,
-    SSH reachability, and the remote Ghostex CLI without committing to a full
-    machine switch or session-list reconnect.
+    connection path. Users managing multiple Macs need to verify SSH
+    reachability, credentials, and the remote Ghostex CLI without committing to
+    a full machine switch or session-list reconnect.
 
     CDXC:AndroidConnectionRecovery 2026-05-17-13:33:
     SSH credential recovery must be consistent after startup. If wake, sleep,
@@ -259,21 +300,18 @@ public final class GhostexAndroidController {
 
     CDXC:AndroidConnectionRecovery 2026-05-17-13:03:
     Host-key repair should be an explicit confirmed action for the selected
-    machine. Removing a known_hosts entry is local to this phone, and the app
-    retries afterward so StrictHostKeyChecking=accept-new can store the current
-    Mac key.
+    machine. Removing SSHJ's stored host-key fingerprint is local to this phone,
+    and the app retries afterward so the verifier can store the current Mac key.
 
     CDXC:AndroidOnboarding 2026-05-17-13:49:
-    Remote sidebar actions are SSH operations too. Run the same phone-side
-    OpenSSH/sshpass preflight before focus, wake, sleep, kill, project actions,
-    and rename so missing local tools always open the Ghostex setup recovery
-    path instead of surfacing as raw SSH failures.
+    Remote sidebar actions are SSH operations too. They now run through the
+    same SSHJ transport as reconnect, attach, create, rename, and file upload,
+    so they must not depend on phone-side SSH packages.
 
     CDXC:AndroidConnectionManagement 2026-05-17-13:50:
-    Check connection is a repair workflow, so missing local OpenSSH/sshpass
-    must open the phone setup panel instead of only updating the compact drawer
-    status. Users checking a secondary machine should still get a direct setup
-    action without changing the selected account.
+    Check connection is a repair workflow for SSH reachability, credentials,
+    Ghostex CLI, zmx, and the bridge inventory endpoint. It should not block on
+    local Termux SSH tools now that SSHJ owns the phone-side transport.
 
     CDXC:AndroidConnectionManagement 2026-05-17-13:52:
     Saved-machine readiness checks can run while users inspect multiple Macs.
@@ -304,12 +342,13 @@ public final class GhostexAndroidController {
     CDXC:AndroidConnectionRecovery 2026-05-17-14:04:
     Check connection is machine-specific, so host-key failures should open the
     confirmed Reset SSH host key prompt for the checked machine. This avoids a
-    vague setup detour and keeps the destructive known_hosts repair explicit.
+    vague setup detour and keeps the destructive host-key repair explicit.
 
     CDXC:AndroidConnectionRecovery 2026-05-17-14:06:
     Resetting a host key from Check connection must preserve the currently
-    selected machine. After the checked machine's known_hosts entry is removed,
-    re-run Check connection instead of switching accounts and reconnecting.
+    selected machine. After the checked machine's SSHJ host-key fingerprint is
+    removed, re-run Check connection instead of switching accounts and
+    reconnecting.
 
     CDXC:AndroidOnboarding 2026-05-17-14:09:
     The first-run tutorial should include exact Mac-side verification commands
@@ -334,13 +373,22 @@ public final class GhostexAndroidController {
         machineStore = new GhostexMachineStore(activity);
         passwordVault = new GhostexPasswordVault(activity);
         inventoryClient = new GhostexSessionInventoryClient(activity);
-        imageUploadClient = new GhostexImageUploadClient(activity);
-        phoneSetup = new GhostexPhoneSetup(activity);
+        fileUploadClient = new GhostexFileUploadClient(activity);
+        terminalSettingsStore = new GhostexTerminalSettingsStore(activity);
+        /*
+        CDXC:AndroidRemoteAttach 2026-05-18-05:22:
+        Ghostex Android should expose only one shareable diagnostic log even
+        before the next remote attach is attempted. Clean legacy multi-file log
+        artifacts at controller startup so upgrading the APK fixes the visible
+        Downloads folder state immediately.
+        */
+        GhostexFileLogger.cleanup(activity);
         bindViews();
     }
 
     public void onTermuxServiceConnected() {
         if (destroyed) return;
+        applyAutoScrollSettingToCurrentTerminal();
         refreshMachineControls();
         restoreWarmAttachSessionsFromService();
         if (!machineStore.hasSeenTutorial()) {
@@ -368,7 +416,13 @@ public final class GhostexAndroidController {
         machineCheckGeneration++;
         remoteActionGeneration++;
         attachGeneration++;
+        drawerSessionPollGeneration++;
         sessionPasswords.clear();
+        stopDrawerSessionPolling();
+        if (drawerSessionPollListener != null) {
+            activity.getDrawer().removeDrawerListener(drawerSessionPollListener);
+            drawerSessionPollListener = null;
+        }
         mainHandler.removeCallbacksAndMessages(null);
         executor.shutdownNow();
     }
@@ -385,79 +439,128 @@ public final class GhostexAndroidController {
             showTutorial(true);
             return;
         }
+        /*
+        CDXC:AndroidRemoteAttach 2026-05-18-05:42:
+        A foreground warm Ghostex attach is already connected to the selected
+        ZMX session. Do not run the automatic resume reconnect while that
+        terminal is active; the extra inventory SSH session can race the remote
+        attach lifecycle and makes terminal-close diagnosis noisy.
+        */
+        if (isCurrentWarmRemoteAttachSession()) {
+            GhostexFileLogger.log(activity, "connection", null,
+                "skipping resume reconnect because current terminal is a warm Ghostex attach");
+            return;
+        }
         if (machineStore.getLastMachine() == null) return;
         long now = System.currentTimeMillis();
         if (now - lastReconnectAttemptAt < RESUME_RECONNECT_THROTTLE_MS) return;
         reconnectLastMachine(true);
     }
 
-    public void attachImageToCurrentTerminal(@NonNull Uri imageUri) {
+    private boolean isCurrentWarmRemoteAttachSession() {
+        TerminalSession currentSession = activity.getCurrentSession();
+        if (currentSession == null || !currentSession.isRunning()) return false;
+        TermuxService service = activity.getTermuxService();
+        if (service == null) return false;
+        TermuxSession termuxSession = service.getTermuxSessionForTerminalSession(currentSession);
+        if (termuxSession == null || termuxSession.getExecutionCommand() == null) return false;
+        return GhostexWarmSessionMetadata.parseAttachCommandLabel(
+            termuxSession.getExecutionCommand().commandLabel) != null;
+    }
+
+    public void attachFileToCurrentTerminal(@NonNull Uri fileUri) {
         /*
-        CDXC:AndroidImageAttach 2026-05-18-01:39:
-        The terminal image button should upload a picked Android image to the
-        selected Mac over SSH and paste `[Image #N](remote-path)` into the
-        active terminal. Use the current saved machine for the upload so the
-        pasted path is readable by the remote agent attached in that terminal.
+        CDXC:AndroidFileAttach 2026-05-18-04:56:
+        The terminal attach button should upload a picked Android image, log,
+        or arbitrary file to the selected Mac over SSH and paste a markdown
+        reference into the active terminal. Use the current saved machine for
+        the upload so the pasted path is readable by the remote agent attached
+        in that terminal.
         */
         if (destroyed) return;
         TerminalSession targetSession = activity.getCurrentSession();
         if (targetSession == null || !targetSession.isRunning()) {
-            setStatus("Open a remote terminal before attaching an image.");
-            activity.showToast("Open a terminal before attaching an image.", false);
+            setStatus("Open a remote terminal before attaching a file.");
+            activity.showToast("Open a terminal before attaching a file.", false);
             return;
         }
         GhostexMachine machine = machineStore.getLastMachine();
         if (machine == null) {
-            setStatus("Add a machine before attaching an image.");
+            setStatus("Add a machine before attaching a file.");
             activity.getDrawer().openDrawer(Gravity.LEFT);
             return;
         }
-        if (!canRunRemoteSidebarAction(machine, "attaching an image")) return;
+        if (!canRunRemoteSidebarAction(machine, "attaching a file")) return;
 
         String password = readPassword(machine);
-        boolean hasSavedPassword = password != null && !password.isEmpty();
         long requestGeneration = ++attachGeneration;
-        setStatus("Preparing image upload to " + machine.displayLabel() + "...");
+        setStatus("Preparing file upload to " + machine.displayLabel() + "...");
         executor.execute(() -> {
-            GhostexPhoneSetup.Status localStatus = phoneSetup.check(hasSavedPassword);
-            if (!localStatus.ready) {
-                mainHandler.post(() -> {
-                    if (isCurrentAttachRequest(requestGeneration, machine)) handlePhoneSetupMissing(localStatus);
-                });
-                return;
-            }
-
-            CachedImage cachedImage = null;
-            GhostexImageUploadClient.Result result;
+            CachedAttachment cachedAttachment = null;
+            GhostexFileUploadClient.Result result;
             try {
-                cachedImage = cachePickedImage(imageUri);
-                result = imageUploadClient.uploadImage(machine, password, cachedImage.file, cachedImage.remotePath);
+                cachedAttachment = cachePickedFile(fileUri);
+                result = fileUploadClient.uploadFile(machine, password, cachedAttachment.file, cachedAttachment.remotePath);
             } catch (Exception error) {
-                result = GhostexImageUploadClient.Result.failure(
-                    error.getMessage() == null ? "Could not read the selected image." : error.getMessage());
+                result = GhostexFileUploadClient.Result.failure(
+                    error.getMessage() == null ? "Could not read the selected file." : error.getMessage());
             } finally {
-                if (cachedImage != null) cachedImage.file.delete();
+                if (cachedAttachment != null) cachedAttachment.file.delete();
             }
 
-            GhostexImageUploadClient.Result uploadResult = result;
+            GhostexFileUploadClient.Result uploadResult = result;
+            boolean isImage = cachedAttachment != null && cachedAttachment.image;
             mainHandler.post(() -> {
                 if (!isCurrentAttachRequest(requestGeneration, machine)) return;
-                handleImageUploadResult(targetSession, uploadResult);
+                handleFileUploadResult(targetSession, uploadResult, isImage);
             });
         });
+    }
+
+    public void refreshCurrentTerminal() {
+        /*
+        CDXC:AndroidTerminalRefresh 2026-05-18-04:56:
+        ZMX documents attach/detach and raw input, but no dedicated dimensions
+        refresh command. A mobile refresh button should force Termux's current
+        terminal-size calculation and then send PageUp/PageDown through the
+        active PTY, matching the reliable redraw nudge used when a ZMX-attached
+        CLI paints with stale dimensions.
+        */
+        if (destroyed) return;
+        TerminalSession currentSession = activity.getCurrentSession();
+        if (currentSession == null || !currentSession.isRunning()) {
+            setStatus("Open a remote terminal before refreshing.");
+            activity.showToast("Open a terminal before refreshing.", false);
+            return;
+        }
+        activity.getTerminalView().updateSize();
+        TerminalEmulator emulator = currentSession.getEmulator();
+        boolean cursorApplicationMode = emulator != null && emulator.isCursorKeysApplicationMode();
+        boolean keypadApplicationMode = emulator != null && emulator.isKeypadApplicationMode();
+        currentSession.write(KeyHandler.getCode(KeyEvent.KEYCODE_PAGE_UP, 0,
+            cursorApplicationMode, keypadApplicationMode));
+        currentSession.write(KeyHandler.getCode(KeyEvent.KEYCODE_PAGE_DOWN, 0,
+            cursorApplicationMode, keypadApplicationMode));
+        setStatus("Refreshed the terminal size and redraw state.");
     }
 
     private void bindViews() {
         statusView = activity.findViewById(R.id.ghostex_connection_status);
         machinesPageStatusView = activity.findViewById(R.id.ghostex_machines_page_status);
+        settingsPageStatusView = activity.findViewById(R.id.ghostex_settings_page_status);
         sessionsPage = activity.findViewById(R.id.ghostex_sessions_page);
         machinesPage = activity.findViewById(R.id.ghostex_machines_page);
+        settingsPage = activity.findViewById(R.id.ghostex_settings_page);
         machinesPageList = activity.findViewById(R.id.ghostex_machines_page_list);
+        settingsPageList = activity.findViewById(R.id.ghostex_settings_page_list);
         GhostexEdgeToEdgeInsets.applyToReleaseSurface(activity.findViewById(R.id.drawer_layout));
         ListView sessionsList = activity.findViewById(R.id.terminal_sessions_list);
         sessionAdapter = new GhostexRemoteSessionAdapter(activity, drawerItems);
         sessionAdapter.setOnProjectSessionCreateListener(item ->
             createRemoteSessionForProject(item, machineStore.getLastMachine()));
+        sessionAdapter.setOnProjectActionsListener(item ->
+            showProjectContextMenu(item, machineStore.getLastMachine()));
+        sessionAdapter.setOnProjectToggleListener(this::toggleProjectCollapsed);
         sessionsList.setAdapter(sessionAdapter);
         sessionsList.setOnItemClickListener((parent, view, position, id) -> {
             GhostexDrawerItem item = sessionAdapter.getItem(position);
@@ -469,21 +572,38 @@ public final class GhostexAndroidController {
         });
         sessionsList.setOnItemLongClickListener((parent, view, position, id) -> {
             GhostexDrawerItem item = sessionAdapter.getItem(position);
-            if (item != null && item.type == GhostexDrawerItem.Type.PROJECT_HEADER) {
-                showProjectContextMenu(item, machineStore.getLastMachine());
-            } else if (item != null && item.session != null) {
+            if (item != null && item.session != null) {
                 showSessionContextMenu(item.session, machineStore.getLastMachine());
+                return true;
             } else if (item != null && item.type == GhostexDrawerItem.Type.STATE_CARD) {
                 showRecoveryActions(item);
+                return true;
             }
-            return true;
+            return false;
         });
 
         View openMachinesButton = activity.findViewById(R.id.ghostex_open_machines_page_button);
         if (openMachinesButton != null) openMachinesButton.setOnClickListener(v -> showMachinesPage());
 
+        View openSettingsButton = activity.findViewById(R.id.ghostex_open_settings_page_button);
+        if (openSettingsButton != null) openSettingsButton.setOnClickListener(v -> showSettingsPage());
+
+        View refreshSessionsButton = activity.findViewById(R.id.ghostex_refresh_sessions_button);
+        if (refreshSessionsButton != null) refreshSessionsButton.setOnClickListener(v -> reconnectLastMachine(false));
+
+        /*
+        CDXC:AndroidNavigation 2026-05-18-04:43:
+        Back navigation is reserved for opening the Ghostex sidebar on Android.
+        The sidebar's icon-only exit button is the explicit app-exit path.
+        */
+        View exitButton = activity.findViewById(R.id.ghostex_exit_app_button);
+        if (exitButton != null) exitButton.setOnClickListener(v -> activity.finishActivityIfNotFinishing());
+
         View backToSessionsButton = activity.findViewById(R.id.ghostex_back_to_sessions_button);
         if (backToSessionsButton != null) backToSessionsButton.setOnClickListener(v -> showSessionsPage());
+
+        View settingsBackToSessionsButton = activity.findViewById(R.id.ghostex_settings_back_to_sessions_button);
+        if (settingsBackToSessionsButton != null) settingsBackToSessionsButton.setOnClickListener(v -> showSessionsPage());
 
         View addButton = activity.findViewById(R.id.new_session_button);
         if (addButton != null) addButton.setOnClickListener(v -> showMachineEditor(null));
@@ -496,17 +616,110 @@ public final class GhostexAndroidController {
 
         View preparePhoneButton = activity.findViewById(R.id.ghostex_prepare_phone_button);
         if (preparePhoneButton != null) preparePhoneButton.setOnClickListener(v -> showPhoneSetupActions());
+
+        bindDrawerSessionPolling();
     }
 
     private void showMachinesPage() {
+        stopDrawerSessionPolling();
         rebuildMachinesPage();
         if (sessionsPage != null) sessionsPage.setVisibility(View.GONE);
+        if (settingsPage != null) settingsPage.setVisibility(View.GONE);
         if (machinesPage != null) machinesPage.setVisibility(View.VISIBLE);
+    }
+
+    private void showSettingsPage() {
+        stopDrawerSessionPolling();
+        rebuildSettingsPage();
+        if (sessionsPage != null) sessionsPage.setVisibility(View.GONE);
+        if (machinesPage != null) machinesPage.setVisibility(View.GONE);
+        if (settingsPage != null) settingsPage.setVisibility(View.VISIBLE);
     }
 
     private void showSessionsPage() {
         if (machinesPage != null) machinesPage.setVisibility(View.GONE);
+        if (settingsPage != null) settingsPage.setVisibility(View.GONE);
         if (sessionsPage != null) sessionsPage.setVisibility(View.VISIBLE);
+        if (activity.getDrawer().isDrawerOpen(Gravity.LEFT)) {
+            refreshSessionInventoryFromDrawerPoll();
+            scheduleDrawerSessionPolling();
+        }
+    }
+
+    private void bindDrawerSessionPolling() {
+        DrawerLayout drawer = activity.getDrawer();
+        drawerSessionPollListener = new DrawerLayout.SimpleDrawerListener() {
+            @Override
+            public void onDrawerOpened(@NonNull View drawerView) {
+                if (drawerView.getId() != R.id.left_drawer) return;
+                if (!shouldPollDrawerSessions()) return;
+                refreshSessionInventoryFromDrawerPoll();
+                scheduleDrawerSessionPolling();
+            }
+
+            @Override
+            public void onDrawerClosed(@NonNull View drawerView) {
+                if (drawerView.getId() != R.id.left_drawer) return;
+                stopDrawerSessionPolling();
+            }
+        };
+        drawer.addDrawerListener(drawerSessionPollListener);
+        if (drawer.isDrawerOpen(Gravity.LEFT)) {
+            refreshSessionInventoryFromDrawerPoll();
+            scheduleDrawerSessionPolling();
+        }
+    }
+
+    private void runDrawerSessionPoll() {
+        if (!shouldPollDrawerSessions()) return;
+        refreshSessionInventoryFromDrawerPoll();
+        scheduleDrawerSessionPolling();
+    }
+
+    private void scheduleDrawerSessionPolling() {
+        mainHandler.removeCallbacks(drawerSessionPollRunnable);
+        if (shouldPollDrawerSessions()) {
+            mainHandler.postDelayed(drawerSessionPollRunnable, DRAWER_SESSION_POLL_MS);
+        }
+    }
+
+    private void stopDrawerSessionPolling() {
+        mainHandler.removeCallbacks(drawerSessionPollRunnable);
+    }
+
+    private boolean shouldPollDrawerSessions() {
+        return !destroyed &&
+            sessionsPage != null &&
+            sessionAdapter != null &&
+            sessionsPage.getVisibility() == View.VISIBLE &&
+            activity.getDrawer().isDrawerOpen(Gravity.LEFT) &&
+            machineStore.hasSeenTutorial() &&
+            machineStore.getLastMachine() != null;
+    }
+
+    private void refreshSessionInventoryFromDrawerPoll() {
+        if (!shouldPollDrawerSessions() || drawerSessionPollInFlight) return;
+        GhostexMachine machine = machineStore.getLastMachine();
+        if (machine == null) return;
+        drawerSessionPollInFlight = true;
+        long requestGeneration = ++drawerSessionPollGeneration;
+        String requestMachineId = machine.id;
+        executor.execute(() -> {
+            String password = readPassword(machine);
+            GhostexSessionInventoryClient.Result result = inventoryClient.fetchSessions(machine, password);
+            mainHandler.post(() -> {
+                drawerSessionPollInFlight = false;
+                if (isCurrentDrawerSessionPoll(requestGeneration, requestMachineId)) {
+                    handleDrawerPollInventoryResult(machine, result);
+                }
+            });
+        });
+    }
+
+    private boolean isCurrentDrawerSessionPoll(long requestGeneration, @NonNull String requestMachineId) {
+        return shouldPollDrawerSessions() &&
+            requestGeneration == drawerSessionPollGeneration &&
+            requestMachineId.equals(machineStore.getLastMachineId());
     }
 
     private void rebuildMachinesPage() {
@@ -528,6 +741,274 @@ public final class GhostexAndroidController {
             machinesPageList.addView(withBottomMargin(drawerMachineCard(
                 machine, machine.id.equals(lastMachineId)), dp(12)));
         }
+    }
+
+    private void rebuildSettingsPage() {
+        if (settingsPageList == null) return;
+        settingsPageList.removeAllViews();
+
+        /*
+        CDXC:AndroidSettings 2026-05-18-10:42:
+        The sidebar Settings page should prioritize Termux's existing config-file options users reach for during remote agent work: fullscreen, startup keyboard state, extra keys, URL tap behavior, session-change toasts, night mode, scrollback, cursor, bell, and volume-key behavior. Keep these controls in the drawer so changing them does not interrupt the current ZMX terminal.
+        */
+        LinearLayout behaviorCard = card();
+        addTitle(behaviorCard, "Terminal behavior", 16);
+        addBody(behaviorCard, "Control how the active terminal follows output and handles phone input.");
+        behaviorCard.addView(settingCheckBox("Auto scroll", "Follow new terminal output unless text is selected.",
+            terminalSettingsStore.isAutoScrollEnabled(), checked -> {
+                terminalSettingsStore.setAutoScrollEnabled(checked);
+                applyAutoScrollSettingToCurrentTerminal();
+                setSettingsStatus(checked ? "Auto scroll is on." : "Auto scroll is paused for the active terminal.");
+            }));
+        behaviorCard.addView(settingCheckBox("Extra keys toolbar", "Show the Termux extra-keys row above the keyboard.",
+            terminalSettingsStore.isTerminalToolbarVisible(), checked -> {
+                terminalSettingsStore.setTerminalToolbarVisible(checked);
+                activity.getTerminalToolbarViewPager().setVisibility(checked ? View.VISIBLE : View.GONE);
+                setSettingsStatus(checked ? "Extra keys toolbar is visible." : "Extra keys toolbar is hidden.");
+            }));
+        behaviorCard.addView(settingCheckBox("Soft keyboard", "Allow the Android soft keyboard for terminal input.",
+            terminalSettingsStore.isSoftKeyboardEnabled(), checked -> {
+                terminalSettingsStore.setSoftKeyboardEnabled(checked);
+                setSettingsStatus(checked ? "Soft keyboard input is enabled." : "Soft keyboard input is disabled.");
+            }));
+        behaviorCard.addView(settingCheckBox("Keep screen on", "Prevent the display from sleeping while the terminal is open.",
+            terminalSettingsStore.shouldKeepScreenOn(), checked -> {
+                terminalSettingsStore.setKeepScreenOn(checked);
+                activity.getTerminalView().setKeepScreenOn(checked);
+                setSettingsStatus(checked ? "Screen will stay on." : "Screen can sleep normally.");
+            }));
+        behaviorCard.addView(settingCheckBox("Fullscreen", "Use Termux's fullscreen terminal mode.",
+            terminalSettingsStore.isFullscreenEnabled(), checked ->
+                setSettingsProperty(() -> terminalSettingsStore.setFullscreenEnabled(checked),
+                    checked ? "Fullscreen is on." : "Fullscreen is off.")));
+        behaviorCard.addView(settingCheckBox("Hide keyboard on startup", "Start focused on terminal output instead of opening the soft keyboard.",
+            terminalSettingsStore.shouldHideSoftKeyboardOnStartup(), checked ->
+                setSettingsProperty(() -> terminalSettingsStore.setHideSoftKeyboardOnStartup(checked),
+                    checked ? "Keyboard will stay hidden at startup." : "Keyboard may open at startup.")));
+        behaviorCard.addView(settingCheckBox("Open URLs on tap", "Tap detected terminal URLs to open them directly.",
+            terminalSettingsStore.shouldOpenUrlOnClick(), checked ->
+                setSettingsProperty(() -> terminalSettingsStore.setOpenUrlOnClick(checked),
+                    checked ? "Terminal URL tap-to-open is on." : "Terminal URL tap-to-open is off.")));
+        behaviorCard.addView(settingCheckBox("Disable session change toasts", "Stop showing toast messages when the active terminal session changes.",
+            terminalSettingsStore.areTerminalSessionChangeToastsDisabled(), checked ->
+                setSettingsProperty(() -> terminalSettingsStore.setTerminalSessionChangeToastsDisabled(checked),
+                    checked ? "Session change toasts are disabled." : "Session change toasts are enabled.")));
+        settingsPageList.addView(withBottomMargin(behaviorCard, dp(12)));
+
+        LinearLayout extraKeysCard = card();
+        addTitle(extraKeysCard, "Extra keys", 16);
+        addBody(extraKeysCard, "Edit Termux's `extra-keys` config. Save reloads the toolbar.");
+        /*
+        CDXC:AndroidSettings 2026-05-18-11:27:
+        The extra-keys editor must be prefilled from Termux's current `extra-keys` property, using Termux's out-of-box default when the property is absent. Keep examples one tap away so users can configure this dense property without leaving Settings.
+        */
+        EditText extraKeysInput = input("Extra keys", terminalSettingsStore.getExtraKeys(),
+            InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        extraKeysInput.setMinLines(4);
+        extraKeysInput.setSingleLine(false);
+        extraKeysInput.setHorizontallyScrolling(false);
+        extraKeysCard.addView(extraKeysInput);
+        addTwoColumnActionRows(extraKeysCard,
+            actionPill("Save keys", v -> saveExtraKeys(extraKeysInput)),
+            actionPill("Examples", v -> showExtraKeysExamples()));
+        settingsPageList.addView(withBottomMargin(extraKeysCard, dp(12)));
+
+        LinearLayout displayCard = card();
+        addTitle(displayCard, "Display", 16);
+        addBody(displayCard, "Choose Termux's built-in extra-key symbol style and app night mode.");
+        displayCard.addView(settingDropdown("Extra keys style",
+            new String[] { "default", "arrows-only", "arrows-all", "all", "none" },
+            terminalSettingsStore.getExtraKeysStyle(),
+            value -> setSettingsProperty(() -> terminalSettingsStore.setExtraKeysStyle(value),
+                "Extra keys style set to " + value + ".")));
+        displayCard.addView(withTopMargin(settingDropdown("Night mode",
+            new String[] {
+                TermuxPropertyConstants.IVALUE_NIGHT_MODE_SYSTEM,
+                TermuxPropertyConstants.IVALUE_NIGHT_MODE_TRUE,
+                TermuxPropertyConstants.IVALUE_NIGHT_MODE_FALSE
+            },
+            terminalSettingsStore.getNightMode(),
+            value -> setSettingsProperty(() -> terminalSettingsStore.setNightMode(value),
+                "Night mode set to " + value + ".")), dp(10)));
+        settingsPageList.addView(withBottomMargin(displayCard, dp(12)));
+
+        LinearLayout fontCard = card();
+        int fontSize = terminalSettingsStore.getFontSize();
+        addTitle(fontCard, "Font size", 16);
+        addBody(fontCard, fontSize == 0 ? "Terminal text size is unavailable." : "Current terminal font size: " + fontSize + " px.");
+        addTwoColumnActionRows(fontCard,
+            actionPill("Smaller", v -> changeSettingsFontSize(false)),
+            actionPill("Larger", v -> changeSettingsFontSize(true)));
+        settingsPageList.addView(withBottomMargin(fontCard, dp(12)));
+
+        LinearLayout scrollbackCard = card();
+        addTitle(scrollbackCard, "Scrollback", 16);
+        addBody(scrollbackCard, "Rows kept for new terminal sessions: " + terminalSettingsStore.getTerminalTranscriptRows() + ".");
+        addTwoColumnActionRows(scrollbackCard,
+            actionPill("2,000", v -> setSettingsProperty(() -> terminalSettingsStore.setTerminalTranscriptRows(2000), "Scrollback set to 2,000 rows for new terminals.")),
+            actionPill("10,000", v -> setSettingsProperty(() -> terminalSettingsStore.setTerminalTranscriptRows(10000), "Scrollback set to 10,000 rows for new terminals.")),
+            actionPill("50,000", v -> setSettingsProperty(() -> terminalSettingsStore.setTerminalTranscriptRows(50000), "Scrollback set to 50,000 rows for new terminals.")));
+        settingsPageList.addView(withBottomMargin(scrollbackCard, dp(12)));
+
+        LinearLayout cursorCard = card();
+        addTitle(cursorCard, "Cursor", 16);
+        addBody(cursorCard, "Current cursor style: " + cursorStyleLabel(terminalSettingsStore.getTerminalCursorStyle()) + ".");
+        addTwoColumnActionRows(cursorCard,
+            actionPill("Block", v -> setSettingsProperty(() -> terminalSettingsStore.setTerminalCursorStyle(TermuxPropertyConstants.VALUE_TERMINAL_CURSOR_STYLE_BLOCK), "Cursor style set to block.")),
+            actionPill("Underline", v -> setSettingsProperty(() -> terminalSettingsStore.setTerminalCursorStyle(TermuxPropertyConstants.VALUE_TERMINAL_CURSOR_STYLE_UNDERLINE), "Cursor style set to underline.")),
+            actionPill("Bar", v -> setSettingsProperty(() -> terminalSettingsStore.setTerminalCursorStyle(TermuxPropertyConstants.VALUE_TERMINAL_CURSOR_STYLE_BAR), "Cursor style set to bar.")));
+        settingsPageList.addView(withBottomMargin(cursorCard, dp(12)));
+
+        LinearLayout alertCard = card();
+        addTitle(alertCard, "Alerts and hardware keys", 16);
+        addBody(alertCard, "Bell: " + bellBehaviourLabel(terminalSettingsStore.getBellBehaviour()) + ". Volume keys: " +
+            (terminalSettingsStore.areVirtualVolumeKeysEnabled() ? "terminal shortcuts" : "phone volume") + ".");
+        addTwoColumnActionRows(alertCard,
+            actionPill("Vibrate", v -> setSettingsProperty(() -> terminalSettingsStore.setBellBehaviour(TermuxPropertyConstants.VALUE_BELL_BEHAVIOUR_VIBRATE), "Bell will vibrate.")),
+            actionPill("Beep", v -> setSettingsProperty(() -> terminalSettingsStore.setBellBehaviour(TermuxPropertyConstants.VALUE_BELL_BEHAVIOUR_BEEP), "Bell will beep.")),
+            actionPill("Ignore bell", v -> setSettingsProperty(() -> terminalSettingsStore.setBellBehaviour(TermuxPropertyConstants.VALUE_BELL_BEHAVIOUR_IGNORE), "Bell will be ignored.")),
+            actionPill(terminalSettingsStore.areVirtualVolumeKeysEnabled() ? "Use phone volume" : "Use terminal keys",
+                v -> setSettingsProperty(() -> terminalSettingsStore.setVirtualVolumeKeysEnabled(!terminalSettingsStore.areVirtualVolumeKeysEnabled()),
+                    terminalSettingsStore.areVirtualVolumeKeysEnabled() ? "Volume buttons now change phone volume." : "Volume buttons now send terminal shortcuts.")));
+        settingsPageList.addView(withBottomMargin(alertCard, dp(12)));
+    }
+
+    private void changeSettingsFontSize(boolean increase) {
+        int fontSize = terminalSettingsStore.changeFontSize(increase);
+        if (fontSize > 0) activity.getTerminalView().setTextSize(fontSize);
+        setSettingsStatus(fontSize == 0 ? "Font size is unavailable." : "Font size set to " + fontSize + " px.");
+        rebuildSettingsPage();
+    }
+
+    private void saveExtraKeys(@NonNull EditText extraKeysInput) {
+        String value = extraKeysInput.getText().toString().trim();
+        if (value.isEmpty()) {
+            extraKeysInput.setError("Enter an extra-keys value.");
+            return;
+        }
+        setSettingsProperty(() -> terminalSettingsStore.setExtraKeys(value), "Extra keys saved.");
+    }
+
+    private void showExtraKeysExamples() {
+        LinearLayout container = verticalContainer(dp(14));
+        container.setBackgroundColor(GHOSTEX_BG);
+        addTitle(container, "Extra keys examples", 18);
+        addBody(container, "Default");
+        addBody(container, TermuxPropertyConstants.DEFAULT_IVALUE_EXTRA_KEYS);
+        addBody(container, "Single row");
+        addBody(container, "[[ESC, TAB, CTRL, ALT, {key: '-', popup: '|'}, DOWN, UP]]");
+        addBody(container, "With drawer, paste, keyboard, and scroll buttons");
+        addBody(container, "[['ESC','TAB','CTRL','ALT','DRAWER','KEYBOARD'], ['PASTE','SCROLL','LEFT','DOWN','UP','RIGHT']]");
+
+        ScrollView scrollView = new ScrollView(activity);
+        scrollView.addView(container);
+        AlertDialog dialog = new AlertDialog.Builder(activity)
+            .setView(scrollView)
+            .setPositiveButton(android.R.string.ok, null)
+            .create();
+        GhostexDialogStyler.show(dialog, null);
+    }
+
+    private void setSettingsProperty(@NonNull SettingsMutation mutation, @NonNull String successStatus) {
+        try {
+            mutation.run();
+            applyReloadedTermuxSettings();
+            setSettingsStatus(successStatus);
+            rebuildSettingsPage();
+        } catch (Exception error) {
+            String message = error.getMessage() == null ? "Could not save this setting." : error.getMessage();
+            setSettingsStatus(message);
+            activity.showToast(message, true);
+        }
+    }
+
+    private void applyReloadedTermuxSettings() {
+        activity.getTerminalView().setTextSize(activity.getPreferences().getFontSize());
+        activity.getTerminalView().setKeepScreenOn(activity.getPreferences().shouldKeepScreenOn());
+        if (activity.getProperties().isUsingFullScreen()) {
+            activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        } else {
+            activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        }
+        TermuxThemeUtils.setAppNightMode(activity.getProperties().getNightMode());
+        AppCompatActivityUtils.setNightMode(activity, NightMode.getAppNightMode().getName(), true);
+        activity.getTermuxTerminalViewClient().onReloadProperties();
+        activity.reloadTerminalToolbarFromProperties();
+        TerminalEmulator emulator = activity.getTerminalView().mEmulator;
+        if (emulator != null) emulator.setCursorStyle();
+        applyAutoScrollSettingToCurrentTerminal();
+    }
+
+    private CheckBox settingCheckBox(@NonNull String title,
+                                     @NonNull String summary,
+                                     boolean checked,
+                                     @NonNull SettingCheckedListener listener) {
+        CheckBox checkBox = new CheckBox(activity);
+        checkBox.setText(title + "\n" + summary);
+        checkBox.setChecked(checked);
+        checkBox.setContentDescription(GhostexAccessibilityCopy.join(title, summary, checked ? "On." : "Off.", "Tap to change."));
+        styleCheckBox(checkBox);
+        checkBox.setOnCheckedChangeListener((buttonView, isChecked) -> listener.onCheckedChanged(isChecked));
+        return checkBox;
+    }
+
+    private LinearLayout settingDropdown(@NonNull String title,
+                                         @NonNull String[] values,
+                                         @NonNull String selectedValue,
+                                         @NonNull SettingSelectedListener listener) {
+        LinearLayout container = verticalContainer(dp(8));
+        addTitle(container, title, 14);
+        Spinner spinner = new Spinner(activity);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(activity,
+            android.R.layout.simple_spinner_item, values);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinner.setAdapter(adapter);
+        int selectedIndex = 0;
+        for (int i = 0; i < values.length; i++) {
+            if (values[i].equals(selectedValue)) {
+                selectedIndex = i;
+                break;
+            }
+        }
+        spinner.setSelection(selectedIndex, false);
+        spinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+                String value = values[position];
+                if (!value.equals(selectedValue)) listener.onSelected(value);
+            }
+
+            @Override
+            public void onNothingSelected(android.widget.AdapterView<?> parent) {
+            }
+        });
+        container.addView(spinner);
+        return container;
+    }
+
+    private void applyAutoScrollSettingToCurrentTerminal() {
+        TerminalEmulator emulator = activity.getTerminalView().mEmulator;
+        if (emulator == null) return;
+        emulator.setAutoScrollDisabled(!terminalSettingsStore.isAutoScrollEnabled());
+        activity.getTerminalView().onScreenUpdated();
+    }
+
+    private void setSettingsStatus(@NonNull String text) {
+        if (settingsPageStatusView != null) settingsPageStatusView.setText(text);
+    }
+
+    @NonNull
+    private String cursorStyleLabel(int style) {
+        if (style == TerminalEmulator.TERMINAL_CURSOR_STYLE_UNDERLINE) return "Underline";
+        if (style == TerminalEmulator.TERMINAL_CURSOR_STYLE_BAR) return "Bar";
+        return "Block";
+    }
+
+    @NonNull
+    private String bellBehaviourLabel(int behaviour) {
+        if (behaviour == TermuxPropertyConstants.IVALUE_BELL_BEHAVIOUR_BEEP) return "Beep";
+        if (behaviour == TermuxPropertyConstants.IVALUE_BELL_BEHAVIOUR_IGNORE) return "Ignore";
+        return "Vibrate";
     }
 
     private LinearLayout drawerMachineCard(@NonNull GhostexMachine machine, boolean selected) {
@@ -623,6 +1104,7 @@ public final class GhostexAndroidController {
             activity.getDrawer().openDrawer(Gravity.LEFT);
             return;
         }
+        drawerSessionPollGeneration++;
         long requestGeneration = ++reconnectGeneration;
         remoteActionGeneration++;
         attachGeneration++;
@@ -634,16 +1116,6 @@ public final class GhostexAndroidController {
         setDrawerState("Connecting", "Opening SSH to " + machine.displayLabel() + " and asking the Ghostex CLI for ZMX-backed sessions.", "Keep Tailscale online on both devices.");
         executor.execute(() -> {
             String password = readPassword(machine);
-            boolean needsSavedPasswordAutomation = password != null && !password.isEmpty();
-            GhostexPhoneSetup.Status localStatus = phoneSetup.check(needsSavedPasswordAutomation);
-            if (!localStatus.ready) {
-                mainHandler.post(() -> {
-                    if (isCurrentReconnect(requestGeneration, requestMachineId)) {
-                        handlePhoneSetupMissing(localStatus);
-                    }
-                });
-                return;
-            }
             GhostexSessionInventoryClient.Result result = inventoryClient.fetchSessions(machine, password);
             mainHandler.post(() -> {
                 if (isCurrentReconnect(requestGeneration, requestMachineId)) {
@@ -683,7 +1155,7 @@ public final class GhostexAndroidController {
         CDXC:AndroidConnectionManagement 2026-05-17-15:23:
         Machine ids stay stable across SSH target edits, so the guard must also
         verify that the saved host/user/port still match the dialog's original
-        target. This keeps old credential and known_hosts recovery panels from
+        target. This keeps old credential and host-key recovery panels from
         operating on a newly edited Mac.
         */
         if (GhostexMachineManagementPolicy.canRunExistingMachineAction(machineMatchesSavedTarget(machine))) {
@@ -730,14 +1202,6 @@ public final class GhostexAndroidController {
         return null;
     }
 
-    private void handlePhoneSetupMissing(@NonNull GhostexPhoneSetup.Status localStatus) {
-        remoteSessions.clear();
-        setDrawerState("Phone setup required", localStatus.message, "Tap Setup above, then Install SSH tools.");
-        sessionAdapter.notifyDataSetChanged();
-        setStatus(localStatus.message);
-        activity.getDrawer().openDrawer(Gravity.LEFT);
-    }
-
     private void handleInventoryResult(@NonNull GhostexMachine machine,
                                        @NonNull GhostexSessionInventoryClient.Result result,
                                        @Nullable String successStatusOverride) {
@@ -752,10 +1216,27 @@ public final class GhostexAndroidController {
             maybePromptForPasswordAfterFailure(machine, result.errorMessage);
             return;
         }
+        applyInventorySessions(machine, result.sessions, successStatusOverride);
+        activity.getDrawer().openDrawer(Gravity.LEFT);
+    }
+
+    private void handleDrawerPollInventoryResult(@NonNull GhostexMachine machine,
+                                                 @NonNull GhostexSessionInventoryClient.Result result) {
+        if (!result.ok) {
+            String message = result.errorMessage == null ? "Could not refresh sessions." : result.errorMessage;
+            setStatus("Session refresh failed: " + message);
+            return;
+        }
+        applyInventorySessions(machine, result.sessions, null);
+    }
+
+    private void applyInventorySessions(@NonNull GhostexMachine machine,
+                                        @NonNull List<GhostexRemoteSession> sessions,
+                                        @Nullable String successStatusOverride) {
         remoteSessions.clear();
-        remoteSessions.addAll(result.sessions);
+        remoteSessions.addAll(sessions);
         sessionAdapter.setCurrentMachineId(machine.id);
-        if (result.sessions.isEmpty()) {
+        if (sessions.isEmpty()) {
             setDrawerState("No ZMX sessions yet",
                 "The machine is reachable, but the Ghostex CLI did not return any ZMX-backed sessions.",
                 "Start or resume sessions in Ghostex on the Mac, then tap Retry.");
@@ -766,10 +1247,9 @@ public final class GhostexAndroidController {
         GhostexMachine connectedMachine = GhostexMachineManagementPolicy.connectedMachineRecord(
             currentMatchingMachine(machine), System.currentTimeMillis());
         if (connectedMachine != null) machineStore.saveMachine(connectedMachine);
-        setStatus(successStatusOverride != null ? successStatusOverride : result.sessions.isEmpty()
+        setStatus(successStatusOverride != null ? successStatusOverride : sessions.isEmpty()
             ? "Connected. No ZMX-backed Ghostex sessions are running."
-            : "Connected to " + machine.displayLabel() + " · " + result.sessions.size() + " ZMX sessions");
-        activity.getDrawer().openDrawer(Gravity.LEFT);
+            : "Connected to " + machine.displayLabel() + " · " + sessions.size() + " ZMX sessions");
     }
 
     private void attachRemoteSession(@NonNull GhostexRemoteSession remoteSession) {
@@ -785,28 +1265,21 @@ public final class GhostexAndroidController {
 
         String warmKey = GhostexWarmSessionKey.forSession(machine, remoteSession);
         TerminalSession warmSession = warmSessions.get(warmKey);
+        String sessionLogTag = zmxSessionLogTag(remoteSession);
         if (warmSession != null && warmSession.isRunning()) {
+            GhostexFileLogger.log(activity, "attach", sessionLogTag, "reusing warm session machine=" + machine.displayLabel() +
+                " sessionId=" + remoteSession.sessionId + " alias=" + remoteSession.alias);
             sessionAdapter.setActiveSession(machine, remoteSession);
             activity.getTermuxTerminalSessionClient().setCurrentSession(warmSession);
+            applyAutoScrollSettingToCurrentTerminal();
             activity.getDrawer().closeDrawers();
             return;
         }
 
         String password = readPassword(machine);
-        boolean hasSavedPassword = password != null && !password.isEmpty();
-        long requestGeneration = ++attachGeneration;
         setStatus("Preparing SSH attach for " + remoteSession.alias + "...");
-        executor.execute(() -> {
-            GhostexPhoneSetup.Status localStatus = phoneSetup.check(hasSavedPassword);
-            mainHandler.post(() -> {
-                if (!isCurrentAttachRequest(requestGeneration, machine)) return;
-                if (!localStatus.ready) {
-                    handlePhoneSetupMissing(localStatus);
-                    return;
-                }
-                openRemoteAttachTerminal(machine, remoteSession, password);
-            });
-        });
+        ++attachGeneration;
+        openRemoteAttachTerminal(machine, remoteSession, password);
     }
 
     private void openRemoteAttachTerminal(@NonNull GhostexMachine machine,
@@ -814,26 +1287,27 @@ public final class GhostexAndroidController {
                                           @Nullable String password) {
         TermuxService service = activity.getTermuxService();
         if (service == null) return;
-        boolean hasSavedPassword = password != null && !password.isEmpty();
-        String command = GhostexSshCommandBuilder.buildAttachCommand(machine, remoteSession, hasSavedPassword);
-        String sessionName = remoteSession.alias + " · " + (remoteSession.title.isEmpty() ? "Ghostex" : remoteSession.title);
-        ExecutionCommand executionCommand = new ExecutionCommand(TermuxShellManager.getNextShellId(),
-            "/system/bin/sh",
-            new String[] { "-lc", command },
-            null,
-            activity.getProperties().getDefaultWorkingDirectory(),
-            ExecutionCommand.Runner.TERMINAL_SESSION.getName(),
-            false);
-        executionCommand.shellName = sessionName;
-        executionCommand.commandLabel = GhostexWarmSessionMetadata.buildAttachCommandLabel(
-            machine.id, remoteSession.sessionId);
-        HashMap<String, String> additionalEnvironment = null;
-        if (hasSavedPassword) {
-            additionalEnvironment = new HashMap<>();
-            additionalEnvironment.put("SSHPASS", password);
+        String sessionLogTag = zmxSessionLogTag(remoteSession);
+        if (password == null || password.isEmpty()) {
+            GhostexFileLogger.log(activity, "attach", sessionLogTag, "blocked attach because password is missing machine=" +
+                machine.displayLabel() + " sessionId=" + remoteSession.sessionId);
+            setStatus("Enter the SSH password for " + machine.displayLabel() + " before attaching.");
+            showMachinePasswordManager(machine);
+            return;
         }
-        TermuxSession termuxSession = service.createTermuxSession(executionCommand, additionalEnvironment);
+        String remoteCommand = GhostexSshCommandBuilder.attachRemoteCommand(remoteSession);
+        String sessionName = remoteSession.alias + " · " + (remoteSession.title.isEmpty() ? "Ghostex" : remoteSession.title);
+        GhostexFileLogger.log(activity, "attach", sessionLogTag, "creating remote terminal machine=" + machine.displayLabel() +
+            " sessionId=" + remoteSession.sessionId + " alias=" + remoteSession.alias +
+            " log=" + GhostexFileLogger.shareableLogPath(activity));
+        TermuxSession termuxSession = service.createExternalTerminalSession(
+            new GhostexSshAttachProcess(activity, machine, password, remoteCommand, sessionLogTag),
+            sessionName,
+            GhostexWarmSessionMetadata.buildAttachCommandLabel(machine.id, remoteSession.sessionId),
+            sessionLogTag);
         if (termuxSession == null) {
+            GhostexFileLogger.log(activity, "attach", sessionLogTag, "service could not create remote terminal machine=" +
+                machine.displayLabel() + " sessionId=" + remoteSession.sessionId);
             setStatus("Could not open the remote session.");
             return;
         }
@@ -843,58 +1317,85 @@ public final class GhostexAndroidController {
         evictOldWarmSessions(terminalSession);
         sessionAdapter.setActiveSession(machine, remoteSession);
         activity.getTermuxTerminalSessionClient().setCurrentSession(terminalSession);
+        applyAutoScrollSettingToCurrentTerminal();
         activity.getDrawer().closeDrawers();
-        setStatus("Attached to " + remoteSession.alias + " on " + machine.displayLabel() + ".");
+        setStatus("Attached to " + remoteSession.alias + " on " + machine.displayLabel() + ". Logs: " +
+            GhostexFileLogger.shareableLogPath(activity));
     }
 
-    private void handleImageUploadResult(@NonNull TerminalSession targetSession,
-                                         @NonNull GhostexImageUploadClient.Result result) {
+    @NonNull
+    private static String zmxSessionLogTag(@NonNull GhostexRemoteSession remoteSession) {
+        String alias = remoteSession.alias == null || remoteSession.alias.trim().isEmpty()
+            ? "unknown"
+            : remoteSession.alias.trim();
+        String sessionId = remoteSession.sessionId == null || remoteSession.sessionId.trim().isEmpty()
+            ? "missing"
+            : remoteSession.sessionId.trim();
+        return "zmx=" + alias + " sessionId=" + sessionId;
+    }
+
+    private void handleFileUploadResult(@NonNull TerminalSession targetSession,
+                                        @NonNull GhostexFileUploadClient.Result result,
+                                        boolean isImage) {
         if (!result.ok || result.remotePath == null) {
-            String message = result.errorMessage == null ? "Could not upload image." : result.errorMessage;
+            String message = result.errorMessage == null ? "Could not upload file." : result.errorMessage;
             setStatus(message);
             activity.showToast(message, true);
             return;
         }
         if (!targetSession.isRunning() || targetSession.getEmulator() == null) {
-            setStatus("Image uploaded, but the terminal is no longer running.");
-            activity.showToast("Image uploaded, but the terminal is closed.", true);
+            setStatus("File uploaded, but the terminal is no longer running.");
+            activity.showToast("File uploaded, but the terminal is closed.", true);
             return;
         }
-        int imageNumber = ++imagePasteCount;
-        String markdown = "[Image #" + imageNumber + "](" + result.remotePath + ")";
+        String label;
+        String statusLabel;
+        int attachmentNumber;
+        if (isImage) {
+            label = "Image";
+            statusLabel = "image";
+            attachmentNumber = ++imagePasteCount;
+        } else {
+            label = "File";
+            statusLabel = "file";
+            attachmentNumber = ++filePasteCount;
+        }
+        String markdown = "[" + label + " #" + attachmentNumber + "](" + result.remotePath + ")";
         targetSession.getEmulator().paste(markdown);
-        setStatus("Uploaded image #" + imageNumber + " to " + result.remotePath + ".");
+        setStatus("Uploaded " + statusLabel + " #" + attachmentNumber + " to " + result.remotePath + ".");
     }
 
     @NonNull
-    private CachedImage cachePickedImage(@NonNull Uri imageUri) throws Exception {
+    private CachedAttachment cachePickedFile(@NonNull Uri fileUri) throws Exception {
         ContentResolver resolver = activity.getContentResolver();
-        String displayName = pickedImageDisplayName(resolver, imageUri);
-        String extension = imageExtension(resolver, imageUri, displayName);
+        String mimeType = resolver.getType(fileUri);
+        boolean isImage = mimeType != null && mimeType.startsWith("image/");
+        String displayName = pickedFileDisplayName(resolver, fileUri);
+        String extension = fileExtension(resolver, fileUri, displayName);
         if (!displayName.contains(".") && !extension.isEmpty()) displayName = displayName + "." + extension;
-        String sanitizedName = sanitizeImageFileName(displayName);
-        File directory = new File(activity.getCacheDir(), "ghostex-image-upload");
+        String sanitizedName = sanitizeAttachmentFileName(displayName);
+        File directory = new File(activity.getCacheDir(), "ghostex-file-upload");
         if (!directory.exists() && !directory.mkdirs()) {
-            throw new Exception("Could not prepare image upload cache.");
+            throw new Exception("Could not prepare file upload cache.");
         }
-        File localFile = File.createTempFile("ghostex-image-", "." + extensionOrDefault(extension), directory);
-        try (InputStream inputStream = resolver.openInputStream(imageUri);
+        File localFile = File.createTempFile("ghostex-file-", "." + extensionOrDefault(extension), directory);
+        try (InputStream inputStream = resolver.openInputStream(fileUri);
              FileOutputStream outputStream = new FileOutputStream(localFile)) {
-            if (inputStream == null) throw new Exception("Could not open the selected image.");
+            if (inputStream == null) throw new Exception("Could not open the selected file.");
             byte[] buffer = new byte[8192];
             int read;
             while ((read = inputStream.read(buffer)) != -1) {
                 outputStream.write(buffer, 0, read);
             }
         }
-        String remotePath = "/tmp/ghostex-android-images/" + System.currentTimeMillis() + "-" + sanitizedName;
-        return new CachedImage(localFile, remotePath);
+        String remotePath = "/tmp/ghostex-android-attachments/" + System.currentTimeMillis() + "-" + sanitizedName;
+        return new CachedAttachment(localFile, remotePath, isImage);
     }
 
     @NonNull
-    private String pickedImageDisplayName(@NonNull ContentResolver resolver, @NonNull Uri imageUri) {
+    private String pickedFileDisplayName(@NonNull ContentResolver resolver, @NonNull Uri fileUri) {
         String displayName = "";
-        try (Cursor cursor = resolver.query(imageUri, new String[] { OpenableColumns.DISPLAY_NAME },
+        try (Cursor cursor = resolver.query(fileUri, new String[] { OpenableColumns.DISPLAY_NAME },
             null, null, null)) {
             if (cursor != null && cursor.moveToFirst()) {
                 int columnIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
@@ -903,35 +1404,35 @@ public final class GhostexAndroidController {
         } catch (Exception ignored) {
             // Some document providers do not expose OpenableColumns metadata.
         }
-        if (displayName == null || displayName.trim().isEmpty()) return "image";
+        if (displayName == null || displayName.trim().isEmpty()) return "attachment";
         return displayName.trim();
     }
 
     @NonNull
-    private String imageExtension(@NonNull ContentResolver resolver,
-                                  @NonNull Uri imageUri,
-                                  @NonNull String displayName) {
+    private String fileExtension(@NonNull ContentResolver resolver,
+                                 @NonNull Uri fileUri,
+                                 @NonNull String displayName) {
         int dotIndex = displayName.lastIndexOf('.');
         if (dotIndex >= 0 && dotIndex < displayName.length() - 1) {
             String extension = displayName.substring(dotIndex + 1).replaceAll("[^A-Za-z0-9]", "");
             if (!extension.isEmpty()) return extension;
         }
-        String mimeType = resolver.getType(imageUri);
+        String mimeType = resolver.getType(fileUri);
         String extension = mimeType == null ? "" : MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType);
-        return extension == null || extension.trim().isEmpty() ? "img" : extension.trim();
+        return extension == null || extension.trim().isEmpty() ? "bin" : extension.trim();
     }
 
     @NonNull
-    private String sanitizeImageFileName(@NonNull String displayName) {
+    private String sanitizeAttachmentFileName(@NonNull String displayName) {
         String sanitized = displayName.replaceAll("[^A-Za-z0-9._-]", "_");
         sanitized = sanitized.replaceAll("^\\.+", "").replaceAll("_+", "_");
-        if (sanitized.isEmpty()) sanitized = "image." + extensionOrDefault("");
+        if (sanitized.isEmpty()) sanitized = "attachment." + extensionOrDefault("");
         return sanitized;
     }
 
     @NonNull
     private String extensionOrDefault(@Nullable String extension) {
-        return extension == null || extension.trim().isEmpty() ? "img" : extension.trim();
+        return extension == null || extension.trim().isEmpty() ? "bin" : extension.trim();
     }
 
     private void restoreWarmAttachSessionsFromService() {
@@ -963,7 +1464,27 @@ public final class GhostexAndroidController {
 
     private void rebuildDrawerItems() {
         drawerItems.clear();
-        drawerItems.addAll(GhostexDrawerItem.buildItems(remoteSessions));
+        drawerItems.addAll(GhostexDrawerItem.buildItems(remoteSessions, collapsedProjectKeys));
+        pruneCollapsedProjectKeys();
+    }
+
+    private void toggleProjectCollapsed(@NonNull GhostexDrawerItem projectItem) {
+        if (projectItem.type != GhostexDrawerItem.Type.PROJECT_HEADER) return;
+        if (collapsedProjectKeys.contains(projectItem.projectKey)) {
+            collapsedProjectKeys.remove(projectItem.projectKey);
+        } else {
+            collapsedProjectKeys.add(projectItem.projectKey);
+        }
+        rebuildDrawerItems();
+        sessionAdapter.notifyDataSetChanged();
+    }
+
+    private void pruneCollapsedProjectKeys() {
+        HashSet<String> liveProjectKeys = new HashSet<>();
+        for (GhostexDrawerItem item : drawerItems) {
+            if (item.type == GhostexDrawerItem.Type.PROJECT_HEADER) liveProjectKeys.add(item.projectKey);
+        }
+        collapsedProjectKeys.retainAll(liveProjectKeys);
     }
 
     private void setDrawerState(@NonNull String title, @NonNull String body, @NonNull String actionHint) {
@@ -1060,6 +1581,14 @@ public final class GhostexAndroidController {
         */
         ArrayList<GhostexRemoteSession> projectSessions = sessionsForProject(projectItem.projectKey);
         ArrayList<GhostexAction> actions = new ArrayList<>();
+        if (canMoveProject(projectItem, -1)) {
+            actions.add(new GhostexAction("Move project up", "Move this project above the previous project in the desktop sidebar.", false,
+                () -> runMoveProjectAction("up", openerMachine, projectItem)));
+        }
+        if (canMoveProject(projectItem, 1)) {
+            actions.add(new GhostexAction("Move project down", "Move this project below the next project in the desktop sidebar.", false,
+                () -> runMoveProjectAction("down", openerMachine, projectItem)));
+        }
         actions.add(new GhostexAction("Refresh sessions", "Reload this project from the Mac.", false, () -> {
             if (canRunRemoteSidebarAction(openerMachine, "refreshing sessions")) reconnectLastMachine(false);
         }));
@@ -1077,13 +1606,37 @@ public final class GhostexAndroidController {
             projectItem.sessionCount == 1 ? "1 ZMX session" : projectItem.sessionCount + " ZMX sessions", actions);
     }
 
+    private boolean canMoveProject(@NonNull GhostexDrawerItem projectItem, int delta) {
+        if (projectItem.projectId.isEmpty()) return false;
+        ArrayList<GhostexDrawerItem> projectHeaders = currentProjectHeaders();
+        int index = projectHeaderIndex(projectHeaders, projectItem.projectKey);
+        int targetIndex = index + delta;
+        return index >= 0 && targetIndex >= 0 && targetIndex < projectHeaders.size();
+    }
+
+    private ArrayList<GhostexDrawerItem> currentProjectHeaders() {
+        ArrayList<GhostexDrawerItem> projectHeaders = new ArrayList<>();
+        for (GhostexDrawerItem item : drawerItems) {
+            if (item.type == GhostexDrawerItem.Type.PROJECT_HEADER) projectHeaders.add(item);
+        }
+        return projectHeaders;
+    }
+
+    private int projectHeaderIndex(@NonNull List<GhostexDrawerItem> projectHeaders,
+                                   @NonNull String projectKey) {
+        for (int index = 0; index < projectHeaders.size(); index++) {
+            if (projectKey.equals(projectHeaders.get(index).projectKey)) return index;
+        }
+        return -1;
+    }
+
     private void showRecoveryActions(@NonNull GhostexDrawerItem stateItem) {
         ArrayList<GhostexAction> actions = new ArrayList<>();
         if (machineStore.getLastMachine() != null) {
             actions.add(new GhostexAction("Retry connection", "Reconnect to the selected machine and reload ZMX sessions.", false, () -> reconnectLastMachine(false)));
         }
         actions.add(new GhostexAction("Open Tailscale", "Confirm this phone and the Mac are online in the same tailnet.", false, () -> openTailscale()));
-        actions.add(new GhostexAction("Prepare phone", "Check or install OpenSSH and sshpass in this Termux runtime.", false, () -> showPhoneSetupActions()));
+        actions.add(new GhostexAction("Setup", "Review Tailscale, saved machines, tutorial steps, and host-key repair.", false, () -> showPhoneSetupActions()));
         actions.add(new GhostexAction("Add SSH machine", "Save another Mac or workstation for Ghostex Android.", false, () -> showMachineEditor(null)));
         actions.add(new GhostexAction("Manage machines", "Edit saved machines, passwords, and connection targets.", false, () -> showMachineSettings()));
         actions.add(new GhostexAction("Tutorial", "Review the complete setup steps for Mac, phone, Tailscale, SSH, Ghostex CLI, and ZMX.", false, () -> showTutorial(false)));
@@ -1134,7 +1687,6 @@ public final class GhostexAndroidController {
         setStatus("Running ghostex " + action + " for " + title + "...");
         executor.execute(() -> {
             String password = readPassword(machine);
-            if (!preflightPhoneToolsForRemoteAction(requestGeneration, machine, password)) return;
             GhostexRemoteActionSummary summary = new GhostexRemoteActionSummary();
             for (GhostexRemoteSession session : actionSessions) {
                 GhostexSessionInventoryClient.Result result =
@@ -1185,7 +1737,6 @@ public final class GhostexAndroidController {
         setStatus("Running ghostex " + action + " for " + session.alias + "...");
         executor.execute(() -> {
             String password = readPassword(machine);
-            if (!preflightPhoneToolsForRemoteAction(requestGeneration, machine, password)) return;
             GhostexSessionInventoryClient.Result result =
                 inventoryClient.runSessionAction(machine, password, action, session);
             mainHandler.post(() -> {
@@ -1211,7 +1762,6 @@ public final class GhostexAndroidController {
         setStatus("Creating a Ghostex session in " + projectItem.projectTitle + "...");
         executor.execute(() -> {
             String password = readPassword(machine);
-            if (!preflightPhoneToolsForRemoteAction(requestGeneration, machine, password)) return;
             GhostexSessionInventoryClient.Result result =
                 inventoryClient.createSession(machine, password, projectItem);
             mainHandler.post(() -> {
@@ -1224,6 +1774,31 @@ public final class GhostexAndroidController {
                     return;
                 }
                 reconnectLastMachine(false, "Created a Ghostex session in " + projectItem.projectTitle + ".");
+            });
+        });
+    }
+
+    private void runMoveProjectAction(@NonNull String direction,
+                                      @Nullable GhostexMachine machine,
+                                      @NonNull GhostexDrawerItem projectItem) {
+        if (machine == null) return;
+        if (!canRunRemoteSidebarAction(machine, "moving this project")) return;
+        long requestGeneration = ++remoteActionGeneration;
+        setStatus("Moving " + projectItem.projectTitle + " " + direction + "...");
+        executor.execute(() -> {
+            String password = readPassword(machine);
+            GhostexSessionInventoryClient.Result result =
+                inventoryClient.moveProject(machine, password, projectItem, direction);
+            mainHandler.post(() -> {
+                if (!isCurrentRemoteAction(requestGeneration, machine)) return;
+                if (!result.ok) {
+                    String message = result.errorMessage == null ? "Could not move this project." : result.errorMessage;
+                    setStatus(message);
+                    maybePromptForPasswordAfterFailure(machine, message, "Retry",
+                        () -> runMoveProjectAction(direction, machine, projectItem));
+                    return;
+                }
+                reconnectLastMachine(false, "Moved " + projectItem.projectTitle + " " + direction + ".");
             });
         });
     }
@@ -1276,7 +1851,6 @@ public final class GhostexAndroidController {
         setStatus("Renaming session " + session.alias + "...");
         executor.execute(() -> {
             String password = readPassword(machine);
-            if (!preflightPhoneToolsForRemoteAction(requestGeneration, machine, password)) return;
             GhostexSessionInventoryClient.Result result =
                 inventoryClient.renameSession(machine, password, session, title);
             mainHandler.post(() -> {
@@ -1318,7 +1892,7 @@ public final class GhostexAndroidController {
         if (!canRunRemoteSidebarAction(machine, "copying this attach command")) return;
         ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
         clipboard.setPrimaryClip(ClipData.newPlainText("Ghostex attach command",
-            GhostexSshCommandBuilder.buildAttachCommand(machine, session, false)));
+            GhostexSshCommandBuilder.buildCopyableAttachCommand(machine, session)));
         activity.showToast("Attach command copied", false);
     }
 
@@ -1515,7 +2089,7 @@ public final class GhostexAndroidController {
             refreshMachineControls();
             reconnectLastMachine(false);
         }));
-        actions.add(new GhostexAction("Check connection", "Verify phone SSH tools, SSH reachability, and the Ghostex CLI.", false,
+        actions.add(new GhostexAction("Check connection", "Verify SSH reachability, credentials, Ghostex CLI, and zmx.", false,
             () -> {
                 if (!ensureMachineStillExists(machine, "checking connection")) return;
                 checkMachineConnection(machine);
@@ -1555,15 +2129,6 @@ public final class GhostexAndroidController {
         setStatus("Checking " + machine.displayLabel() + "...");
         executor.execute(() -> {
             String password = readPassword(machine);
-            GhostexPhoneSetup.Status localStatus = phoneSetup.check(password != null && !password.isEmpty());
-            if (!localStatus.ready) {
-                mainHandler.post(() -> {
-                    if (!isLatestMachineCheck(requestGeneration, machine)) return;
-                    setStatus(localStatus.message);
-                    showPhoneSetupActions();
-                });
-                return;
-            }
             GhostexSessionInventoryClient.Result result = inventoryClient.checkConnection(machine, password);
             mainHandler.post(() -> {
                 if (!isLatestMachineCheck(requestGeneration, machine)) return;
@@ -1701,22 +2266,30 @@ public final class GhostexAndroidController {
         LinearLayout container = verticalContainer(dp(18));
         container.setBackgroundColor(GHOSTEX_BG);
 
-        addTitle(container, "Prepare this phone", 18);
-        addBody(container, "Ghostex Android uses this Termux runtime to open SSH and attach to remote ZMX sessions. Install the phone-side tools here before reconnecting.");
+        addTitle(container, "Setup", 18);
+        addBody(container, "Ghostex Android connects with its built-in SSH transport, then asks the Mac-hosted Ghostex CLI for ZMX sessions. No phone-side SSH package install is required.");
 
-        LinearLayout toolsCard = card();
-        addTitle(toolsCard, "SSH tools", 15);
-        TextView statusText = bodyText("Tap Check to verify OpenSSH and sshpass in this Android runtime.");
-        toolsCard.addView(withBottomMargin(statusText, dp(8)));
-        addBody(toolsCard, "OpenSSH is required for every connection. sshpass is only needed when you choose saved-password reconnect instead of SSH keys or Tailscale SSH.");
-        LinearLayout toolActions = horizontalActions();
-        toolActions.addView(actionPill("Check", v -> checkPhoneSetup(statusText)));
-        toolActions.addView(actionPill("Install SSH", v -> {
+        LinearLayout transportCard = card();
+        addTitle(transportCard, "Connection path", 15);
+        addBody(transportCard, "The phone uses SSHJ inside the app for reconnect, attach, actions, create, rename, and file upload. The Mac still needs Remote Login, Ghostex CLI, zmx, and Tailscale online.");
+        ArrayList<View> transportActions = new ArrayList<>();
+        GhostexMachine selectedMachine = machineStore.getLastMachine();
+        if (selectedMachine != null) {
+            transportActions.add(actionPill("Check", v -> {
+                if (setupDialog[0] != null) setupDialog[0].dismiss();
+                checkMachineConnection(selectedMachine);
+            }));
+            transportActions.add(actionPill("Host key", v -> {
+                if (setupDialog[0] != null) setupDialog[0].dismiss();
+                confirmResetKnownHost(selectedMachine);
+            }));
+        }
+        transportActions.add(actionPill("Machines", v -> {
             if (setupDialog[0] != null) setupDialog[0].dismiss();
-            installPhoneSshTools();
+            showMachineSettings();
         }));
-        toolsCard.addView(withTopMargin(toolActions, dp(8)));
-        container.addView(withBottomMargin(toolsCard, dp(12)));
+        addTwoColumnActionRows(transportCard, transportActions.toArray(new View[0]));
+        container.addView(withBottomMargin(transportCard, dp(12)));
 
         LinearLayout networkCard = card();
         addTitle(networkCard, "Network setup", 15);
@@ -1730,13 +2303,6 @@ public final class GhostexAndroidController {
             if (setupDialog[0] != null) setupDialog[0].dismiss();
             showTutorial(false);
         }));
-        GhostexMachine selectedMachine = machineStore.getLastMachine();
-        if (selectedMachine != null) {
-            networkActions.add(actionPill("Host key", v -> {
-                if (setupDialog[0] != null) setupDialog[0].dismiss();
-                confirmResetKnownHost(selectedMachine);
-            }));
-        }
         addTwoColumnActionRows(networkCard, networkActions.toArray(new View[0]));
         container.addView(networkCard);
 
@@ -1878,71 +2444,18 @@ public final class GhostexAndroidController {
         return row;
     }
 
-    private void checkPhoneSetup() {
-        checkPhoneSetup(null);
-    }
-
-    private void checkPhoneSetup(@Nullable TextView inlineStatus) {
-        setStatus("Checking phone SSH tools...");
-        if (inlineStatus != null) inlineStatus.setText(R.string.ghostex_setup_checking_ssh_tools);
-        executor.execute(() -> {
-            GhostexMachine machine = machineStore.getLastMachine();
-            String password = machine == null ? null : readPassword(machine);
-            GhostexPhoneSetup.Status status = phoneSetup.check(password != null && !password.isEmpty());
-            mainHandler.post(() -> {
-                if (destroyed) return;
-                setStatus(status.message);
-                if (inlineStatus != null) inlineStatus.setText(status.message);
-            });
-        });
-    }
-
-    private boolean preflightPhoneToolsForRemoteAction(long requestGeneration,
-                                                       @NonNull GhostexMachine machine,
-                                                       @Nullable String password) {
-        GhostexPhoneSetup.Status localStatus = phoneSetup.check(password != null && !password.isEmpty());
-        if (localStatus.ready) return true;
-        mainHandler.post(() -> {
-            if (isCurrentRemoteAction(requestGeneration, machine)) handlePhoneSetupMissing(localStatus);
-        });
-        return false;
-    }
-
-    private void installPhoneSshTools() {
-        TermuxService service = activity.getTermuxService();
-        if (service == null) {
-            setStatus("Terminal service is not ready yet.");
-            return;
-        }
-        ExecutionCommand executionCommand = new ExecutionCommand(TermuxShellManager.getNextShellId(),
-            "/system/bin/sh",
-            new String[] { "-lc", GhostexPhoneSetup.INSTALL_SSH_TOOLS_INTERACTIVE_COMMAND },
-            null,
-            activity.getProperties().getDefaultWorkingDirectory(),
-            ExecutionCommand.Runner.TERMINAL_SESSION.getName(),
-            false);
-        executionCommand.shellName = "Ghostex Android Setup";
-        TermuxSession termuxSession = service.createTermuxSession(executionCommand);
-        if (termuxSession == null) {
-            setStatus("Could not open phone setup terminal.");
-            return;
-        }
-        activity.getTermuxTerminalSessionClient().setCurrentSession(termuxSession.getTerminalSession());
-        activity.getDrawer().closeDrawers();
-        setStatus("Installing phone SSH tools...");
-    }
-
     private void resetKnownHost(@NonNull GhostexMachine machine) {
         if (!ensureMachineStillExists(machine, "resetting its SSH host key")) return;
         machineStore.setLastMachineId(machine.id);
         refreshMachineControls();
         setStatus("Resetting SSH host key for " + machine.displayLabel() + "...");
         executor.execute(() -> {
-            GhostexPhoneSetup.Status status = phoneSetup.resetKnownHost(machine);
+            GhostexSshTransport.CommandResult status =
+                new GhostexSshTransport(activity).resetPersistedHostKey(machine);
             mainHandler.post(() -> {
                 if (!isCurrentMachine(machine) || !machineMatchesSavedTarget(machine)) return;
-                setStatus(status.message);
-                if (status.ready) reconnectLastMachine(false);
+                setStatus(status.output);
+                if (status.exitCode == 0) reconnectLastMachine(false);
             });
         });
     }
@@ -1951,11 +2464,12 @@ public final class GhostexAndroidController {
         if (!ensureMachineStillExists(machine, "resetting its SSH host key")) return;
         setStatus("Resetting SSH host key for " + machine.displayLabel() + "...");
         executor.execute(() -> {
-            GhostexPhoneSetup.Status status = phoneSetup.resetKnownHost(machine);
+            GhostexSshTransport.CommandResult status =
+                new GhostexSshTransport(activity).resetPersistedHostKey(machine);
             mainHandler.post(() -> {
                 if (!machineMatchesSavedTarget(machine)) return;
-                setStatus(status.message);
-                if (status.ready) checkMachineConnection(machine);
+                setStatus(status.output);
+                if (status.exitCode == 0) checkMachineConnection(machine);
             });
         });
     }
@@ -2511,6 +3025,18 @@ public final class GhostexAndroidController {
         return Math.round(value * activity.getResources().getDisplayMetrics().density);
     }
 
+    private interface SettingCheckedListener {
+        void onCheckedChanged(boolean checked);
+    }
+
+    private interface SettingSelectedListener {
+        void onSelected(@NonNull String value);
+    }
+
+    private interface SettingsMutation {
+        void run() throws Exception;
+    }
+
     private static final class GhostexAction {
         final String label;
         final String detail;
@@ -2530,13 +3056,15 @@ public final class GhostexAndroidController {
         }
     }
 
-    private static final class CachedImage {
+    private static final class CachedAttachment {
         final File file;
         final String remotePath;
+        final boolean image;
 
-        CachedImage(@NonNull File file, @NonNull String remotePath) {
+        CachedAttachment(@NonNull File file, @NonNull String remotePath, boolean image) {
             this.file = file;
             this.remotePath = remotePath;
+            this.image = image;
         }
     }
 

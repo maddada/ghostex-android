@@ -8,17 +8,13 @@ import androidx.annotation.Nullable;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
 public final class GhostexSessionInventoryClient {
 
-    private final GhostexTermuxShell termuxShell;
+    private final GhostexSshTransport sshTransport;
 
     /*
     CDXC:AndroidRemoteSessions 2026-05-17-10:13:
@@ -38,15 +34,15 @@ public final class GhostexSessionInventoryClient {
 
     CDXC:AndroidRemoteSessions 2026-05-17-18:24:
     Inventory and remote action commands are non-interactive, but they still
-    depend on Termux HOME, PREFIX, known_hosts, and package runtime variables.
-    Use GhostexTermuxShell for these processes so reconnect behaves like the
-    visible terminal attach path instead of a partial Android shell.
+    depend on the Mac-hosted Ghostex CLI contract. Use the app-owned SSHJ
+    transport directly so reconnect behaves like attach without requiring
+    phone-side Termux package binaries.
 
     CDXC:AndroidConnectionRecovery 2026-05-17-12:32:
-    SSH, sshpass, and the remote Ghostex CLI usually report actionable failures
-    on stderr. Merge stderr into the captured command output so failed reconnect
-    cards and password recovery prompts can show the real reason instead of a
-    generic empty-output message.
+    SSHJ and the remote Ghostex CLI usually report actionable failures. Merge
+    stderr into captured command output so failed reconnect cards and password
+    recovery prompts can show the real reason instead of a generic empty-output
+    message.
 
     CDXC:AndroidRemoteSessions 2026-05-17-12:38:
     Remote SSH login shells may print banners, warnings, or profile text around
@@ -91,9 +87,19 @@ public final class GhostexSessionInventoryClient {
         Creating a session from Android is a Mac-side Ghostex CLI action. Keep
         it on the same SSH/process path as focus, rename, and lifecycle actions
         so the main app owns terminal creation and zmx persistence selection.
+
+        CDXC:AndroidSshTransport 2026-05-18-02:56:
+        Non-interactive remote CLI calls should use the app-owned SSH transport
+        instead of Termux package binaries so reconnect, readiness, create, and
+        context actions remain compatible with modern target SDKs.
+
+        CDXC:AndroidSidebar 2026-05-18-16:13:
+        Project move commands are desktop-sidebar mutations, not Android-local
+        sorting preferences. Send them through the Mac Ghostex CLI and refresh
+        inventory afterward so mobile mirrors the persisted desktop order.
     */
     public GhostexSessionInventoryClient(@NonNull Context context) {
-        termuxShell = new GhostexTermuxShell(context);
+        sshTransport = new GhostexSshTransport(context);
     }
 
 
@@ -119,15 +125,14 @@ public final class GhostexSessionInventoryClient {
     }
 
     public Result fetchSessions(@NonNull GhostexMachine machine, @Nullable String password) {
-        boolean hasPassword = password != null && !password.isEmpty();
-        String command = GhostexSshCommandBuilder.buildSessionListCommand(machine, hasPassword);
         try {
-            CommandResult commandResult = runShellCommand(command, password);
+            GhostexSshTransport.CommandResult commandResult = runRemoteGhostexCommand(machine, password,
+                "ghostex sessions --json", "zmx=none op=fetchSessions");
             if (commandResult.timedOut) {
                 return Result.failure(GhostexRemoteTimeoutCopy.connecting(machine));
             }
             if (commandResult.exitCode != 0) {
-                return Result.failure(summarizeFailure(commandResult.output, hasPassword));
+                return Result.failure(summarizeFailure(commandResult.output, hasPassword(password)));
             }
             return Result.success(parseSessions(commandResult.output));
         } catch (Exception error) {
@@ -137,15 +142,15 @@ public final class GhostexSessionInventoryClient {
 
     public Result runSessionAction(@NonNull GhostexMachine machine, @Nullable String password,
                                    @NonNull String action, @NonNull GhostexRemoteSession session) {
-        boolean hasPassword = password != null && !password.isEmpty();
-        String command = GhostexSshCommandBuilder.buildSessionActionCommand(machine, session, action, hasPassword);
         try {
-            CommandResult commandResult = runShellCommand(command, password);
+            GhostexSshTransport.CommandResult commandResult = runRemoteGhostexCommand(machine, password,
+                GhostexSshCommandBuilder.sessionActionRemoteCommand(session, action),
+                "zmx=" + session.alias + " sessionId=" + session.sessionId + " op=" + action);
             if (commandResult.timedOut) {
                 return Result.failure(GhostexRemoteTimeoutCopy.sessionAction(action));
             }
             if (commandResult.exitCode != 0) {
-                return Result.failure(summarizeFailure(commandResult.output, hasPassword));
+                return Result.failure(summarizeFailure(commandResult.output, hasPassword(password)));
             }
             return Result.success(new ArrayList<>());
         } catch (Exception error) {
@@ -155,15 +160,15 @@ public final class GhostexSessionInventoryClient {
 
     public Result renameSession(@NonNull GhostexMachine machine, @Nullable String password,
                                 @NonNull GhostexRemoteSession session, @NonNull String title) {
-        boolean hasPassword = password != null && !password.isEmpty();
-        String command = GhostexSshCommandBuilder.buildRenameSessionCommand(machine, session, title, hasPassword);
         try {
-            CommandResult commandResult = runShellCommand(command, password);
+            GhostexSshTransport.CommandResult commandResult = runRemoteGhostexCommand(machine, password,
+                GhostexSshCommandBuilder.renameSessionRemoteCommand(session, title),
+                "zmx=" + session.alias + " sessionId=" + session.sessionId + " op=rename");
             if (commandResult.timedOut) {
                 return Result.failure(GhostexRemoteTimeoutCopy.renaming());
             }
             if (commandResult.exitCode != 0) {
-                return Result.failure(summarizeFailure(commandResult.output, hasPassword));
+                return Result.failure(summarizeFailure(commandResult.output, hasPassword(password)));
             }
             return Result.success(new ArrayList<>());
         } catch (Exception error) {
@@ -173,16 +178,15 @@ public final class GhostexSessionInventoryClient {
 
     public Result createSession(@NonNull GhostexMachine machine, @Nullable String password,
                                 @NonNull GhostexDrawerItem projectItem) {
-        boolean hasPassword = password != null && !password.isEmpty();
-        String command = GhostexSshCommandBuilder.buildCreateSessionCommand(machine,
-            projectItem.projectId, projectItem.groupId, hasPassword);
         try {
-            CommandResult commandResult = runShellCommand(command, password);
+            GhostexSshTransport.CommandResult commandResult = runRemoteGhostexCommand(machine, password,
+                GhostexSshCommandBuilder.createSessionRemoteCommand(projectItem.projectId, projectItem.groupId),
+                "zmx=none op=createSession");
             if (commandResult.timedOut) {
                 return Result.failure(GhostexRemoteTimeoutCopy.sessionAction("create session"));
             }
             if (commandResult.exitCode != 0) {
-                return Result.failure(summarizeFailure(commandResult.output, hasPassword));
+                return Result.failure(summarizeFailure(commandResult.output, hasPassword(password)));
             }
             return Result.success(new ArrayList<>());
         } catch (Exception error) {
@@ -190,16 +194,35 @@ public final class GhostexSessionInventoryClient {
         }
     }
 
-    public Result checkConnection(@NonNull GhostexMachine machine, @Nullable String password) {
-        boolean hasPassword = password != null && !password.isEmpty();
-        String command = GhostexSshCommandBuilder.buildConnectionCheckCommand(machine, hasPassword);
+    public Result moveProject(@NonNull GhostexMachine machine, @Nullable String password,
+                              @NonNull GhostexDrawerItem projectItem,
+                              @NonNull String direction) {
         try {
-            CommandResult commandResult = runShellCommand(command, password);
+            GhostexSshTransport.CommandResult commandResult = runRemoteGhostexCommand(machine, password,
+                GhostexSshCommandBuilder.moveProjectRemoteCommand(projectItem.projectId, direction),
+                "zmx=none op=moveProject direction=" + direction);
+            if (commandResult.timedOut) {
+                return Result.failure(GhostexRemoteTimeoutCopy.sessionAction("move project"));
+            }
+            if (commandResult.exitCode != 0) {
+                return Result.failure(summarizeFailure(commandResult.output, hasPassword(password)));
+            }
+            return Result.success(new ArrayList<>());
+        } catch (Exception error) {
+            return Result.failure(error.getMessage() == null ? "Could not move this project." : error.getMessage());
+        }
+    }
+
+    public Result checkConnection(@NonNull GhostexMachine machine, @Nullable String password) {
+        try {
+            GhostexSshTransport.CommandResult commandResult = runRemoteGhostexCommand(machine, password,
+                "command -v ghostex >/dev/null || { printf '%s\\n' 'ghostex not found'; exit 127; }; " +
+                    "ghostex android-check --json", "zmx=none op=checkConnection");
             if (commandResult.timedOut) {
                 return Result.failure(GhostexRemoteTimeoutCopy.checking(machine));
             }
             if (commandResult.exitCode != 0) {
-                return Result.failure(summarizeFailure(commandResult.output, hasPassword));
+                return Result.failure(summarizeFailure(commandResult.output, hasPassword(password)));
             }
             return Result.success(new ArrayList<>());
         } catch (Exception error) {
@@ -289,69 +312,21 @@ public final class GhostexSessionInventoryClient {
         return null;
     }
 
-    private CommandResult runShellCommand(@NonNull String command, @Nullable String password) throws Exception {
-        boolean hasPassword = password != null && !password.isEmpty();
-        ProcessBuilder processBuilder = createTermuxShellProcess(command);
-        processBuilder.redirectErrorStream(true);
-        if (hasPassword) processBuilder.environment().put("SSHPASS", password);
-        Process process = processBuilder.start();
-        StringBuilder output = new StringBuilder();
-        Thread readerThread = new Thread(() -> readAll(process.getInputStream(), output), "ghostex-ssh-output");
-        readerThread.start();
-        boolean finished = waitForProcess(process, 18_000L);
-        if (!finished) {
-            process.destroy();
-            readerThread.join(500L);
-            return new CommandResult(-1, output.toString(), true);
-        }
-        readerThread.join(1_000L);
-        return new CommandResult(process.exitValue(), output.toString(), false);
+    private GhostexSshTransport.CommandResult runRemoteGhostexCommand(@NonNull GhostexMachine machine,
+                                                                      @Nullable String password,
+                                                                      @NonNull String remoteCommand) {
+        return runRemoteGhostexCommand(machine, password, remoteCommand, null);
     }
 
-    private void readAll(@NonNull InputStream inputStream, @NonNull StringBuilder builder) {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (builder.length() > 0) builder.append('\n');
-                builder.append(line);
-            }
-        } catch (Exception ignored) {
-            // The process may be destroyed while the reader is blocked.
-        }
+    private GhostexSshTransport.CommandResult runRemoteGhostexCommand(@NonNull GhostexMachine machine,
+                                                                      @Nullable String password,
+                                                                      @NonNull String remoteCommand,
+                                                                      @Nullable String logTag) {
+        return sshTransport.exec(machine, password, GhostexSshCommandBuilder.loginShellCommand(remoteCommand), logTag);
     }
 
-    private boolean waitForProcess(@NonNull Process process, long timeoutMs) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + timeoutMs;
-        while (System.currentTimeMillis() < deadline) {
-            try {
-                process.exitValue();
-                return true;
-            } catch (IllegalThreadStateException ignored) {
-                Thread.sleep(100L);
-            }
-        }
-        try {
-            process.exitValue();
-            return true;
-        } catch (IllegalThreadStateException ignored) {
-            return false;
-        }
-    }
-
-    private static final class CommandResult {
-        final int exitCode;
-        final String output;
-        final boolean timedOut;
-
-        CommandResult(int exitCode, @NonNull String output, boolean timedOut) {
-            this.exitCode = exitCode;
-            this.output = output;
-            this.timedOut = timedOut;
-        }
-    }
-
-    private ProcessBuilder createTermuxShellProcess(@NonNull String command) {
-        return termuxShell.newShellProcess(command);
+    private static boolean hasPassword(@Nullable String password) {
+        return password != null && !password.isEmpty();
     }
 
     static String summarizeFailure(@Nullable String output, boolean usedPassword) {
@@ -377,11 +352,8 @@ public final class GhostexSessionInventoryClient {
         environments do not miss CLI repair hints.
         */
         String lowerText = text.toLowerCase(Locale.ROOT);
-        if (text.contains("sshpass")) {
-            return "Install sshpass in Termux or configure SSH keys/Tailscale SSH for saved-password reconnects.";
-        }
         if (text.contains("Host key verification failed") || text.contains("REMOTE HOST IDENTIFICATION HAS CHANGED")) {
-            return "SSH host key verification failed. Open Setup and remove the old known_hosts entry for this machine, or confirm you are connecting to the right Mac.";
+            return "SSH host key verification failed. Open Setup and reset this phone's saved host key for the machine, or confirm you are connecting to the right Mac.";
         }
         if (text.contains("Permission denied")) {
             return usedPassword

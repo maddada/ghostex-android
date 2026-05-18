@@ -19,11 +19,10 @@ set -euo pipefail
 # runtime and test packages before install so a signed release candidate or
 # existing Termux install cannot block the debug proof with signature mismatch.
 #
-# CDXC:AndroidReleaseE2E 2026-05-17-19:34:
-# Uninstalling Ghostex Android for disposable-device safety also removes any
-# previously installed phone-side OpenSSH/sshpass packages. Make the live E2E
-# harness self-contained by waiting for the fresh app bootstrap, then installing
-# those tools inside the app-private runtime before instrumentation.
+# CDXC:AndroidReleaseE2E 2026-05-18-06:58:
+# The live E2E harness must prove the Play-compliant app-owned SSHJ transport,
+# not an app-private OpenSSH package install. A fresh disposable install should
+# run instrumentation directly after app launch and password staging.
 #
 # CDXC:AndroidSideBySideInstall 2026-05-17-23:39:
 # Live device E2E must not uninstall or clear upstream Termux when Ghostex
@@ -51,14 +50,14 @@ Usage:
 What this proves:
   1. A real Android device/emulator is reachable over adb.
   2. The Ghostex Android debug APK and instrumentation APK install cleanly.
-  3. The on-device Termux runtime can find phone-side ssh/sshpass as needed.
+  3. The app-owned SSHJ transport can authenticate to the supplied Mac.
   4. The device reaches the supplied Mac over Tailscale SSH.
   5. The Mac SSH login shell can run ghostex and zmx.
   6. ghostex android-check --json verifies zmx, Ghostex zmx persistence, and bridge inventory.
   7. ghostex sessions --json returns ZMX-backed sessions.
   8. The selected session's attach command uses ghostex attach --session-id.
   9. A stable --session-id Ghostex CLI action works from the Android runtime.
-  10. The harness can prepare phone-side OpenSSH/sshpass after a fresh install.
+  10. The harness does not depend on phone-side OpenSSH/sshpass packages.
 
 Before running:
   - Install and sign in to Tailscale on the phone/emulator and Mac.
@@ -92,34 +91,6 @@ adb_cmd() {
   fi
 }
 
-termux_run() {
-  local command="$1"
-  adb_cmd shell run-as "$runtime_package" "$prefix/bin/bash" -lc \
-    "export HOME=$home PREFIX=$prefix TMPDIR=$prefix/tmp PATH=$prefix/bin:/system/bin:/system/xbin; $command"
-}
-
-wait_for_termux_bootstrap() {
-  local attempt
-  for attempt in $(seq 1 90); do
-    if adb_cmd shell run-as "$runtime_package" sh -c "test -x files/usr/bin/pkg" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 1
-  done
-  echo "Timed out waiting for Ghostex Android bootstrap to install pkg." >&2
-  return 1
-}
-
-install_phone_ssh_tools() {
-  wait_for_termux_bootstrap
-  if termux_run "command -v ssh >/dev/null && command -v sshpass >/dev/null" >/dev/null 2>&1; then
-    return 0
-  fi
-  echo "Installing phone-side OpenSSH and sshpass in the fresh Ghostex Android runtime..."
-  termux_run "pkg update -y && pkg install -y openssh sshpass"
-  termux_run "command -v ssh && command -v sshpass" >/dev/null
-}
-
 require_env GHOSTEX_ANDROID_HOST
 require_env GHOSTEX_ANDROID_USER
 
@@ -132,9 +103,6 @@ project_dir="$(cd "$script_dir/.." && pwd)"
 cd "$project_dir"
 runtime_package="$(ghostex_android_package_name)"
 test_package="$(ghostex_android_test_package_name)"
-prefix="$(ghostex_android_prefix)"
-home="$(ghostex_android_home)"
-
 require_ghostex_android_device "$ADB_BIN" "${GHOSTEX_ANDROID_DEVICE:-}"
 require_ghostex_android_data_clear_confirmation "GHOSTEX_ANDROID_CONFIRM_CLEAR_DATA"
 
@@ -153,7 +121,6 @@ adb_cmd uninstall "$test_package" >/dev/null 2>&1 || true
 adb_cmd install -r "$apk_path" >/dev/null
 adb_cmd install -r "$test_apk_path" >/dev/null
 adb_cmd shell am start -n "$runtime_package/com.termux.app.TermuxActivity" >/dev/null
-install_phone_ssh_tools
 
 cleanup_password_files() {
   adb_cmd shell run-as "$runtime_package" rm -f files/ghostex-e2e/password >/dev/null 2>&1 || true

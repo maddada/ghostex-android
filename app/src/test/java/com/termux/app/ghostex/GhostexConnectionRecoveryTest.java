@@ -13,7 +13,7 @@ public final class GhostexConnectionRecoveryTest {
 
     CDXC:AndroidConnectionRecovery 2026-05-17-14:04:
     Check connection should recognize host-key repair messages separately from
-    credentials so Android can show the confirmed known_hosts reset for the
+    credentials so Android can show the confirmed SSHJ host-key reset for the
     checked machine.
     */
 
@@ -39,7 +39,7 @@ public final class GhostexConnectionRecoveryTest {
     @Test
     public void promptsForHostKeyResetMessages() {
         Assert.assertTrue(GhostexConnectionRecovery.shouldPromptForHostKeyReset(
-            "SSH host key verification failed. Open Setup and remove the old known_hosts entry for this machine, or confirm you are connecting to the right Mac."));
+            "SSH host key verification failed. Open Setup and reset this phone's saved host key for the machine, or confirm you are connecting to the right Mac."));
     }
 
     @Test

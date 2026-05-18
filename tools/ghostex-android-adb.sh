@@ -13,7 +13,8 @@
 #
 
 ghostex_android_package_name() {
-  printf '%s\n' "${GHOSTEX_ANDROID_PACKAGE_NAME:-com.ghostx}"
+  # CDXC:AndroidBranding 2026-05-18-06:41: Device helpers default to `io.ghostex` so adb install/test flows target a correctly spelled Ghostex package id.
+  printf '%s\n' "${GHOSTEX_ANDROID_PACKAGE_NAME:-io.ghostex}"
 }
 
 ghostex_android_test_package_name() {

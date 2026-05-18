@@ -31,7 +31,6 @@ import android.widget.Toast;
 import com.termux.R;
 import com.termux.app.api.file.FileReceiverActivity;
 import com.termux.app.ghostex.GhostexAndroidController;
-import com.termux.app.ghostex.GhostexBackNavigationPolicy;
 import com.termux.app.terminal.TermuxActivityRootView;
 import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
 import com.termux.app.terminal.io.TermuxTerminalExtraKeys;
@@ -85,7 +84,7 @@ import java.util.Arrays;
 public final class TermuxActivity extends AppCompatActivity implements ServiceConnection {
 
     private static final int REQUEST_POST_NOTIFICATIONS_PERMISSION = 7031;
-    private static final int REQUEST_GHOSTEX_ATTACH_IMAGE = 7032;
+    private static final int REQUEST_GHOSTEX_ATTACH_FILE = 7032;
 
     /**
      * The connection to the {@link TermuxService}. Requested in {@link #onCreate(Bundle)} with a call to
@@ -210,8 +209,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final String ARG_ACTIVITY_RECREATED = "activity_recreated";
 
     private static final String LOG_TAG = "TermuxActivity";
-
-    private long mLastGhostexBackPressedAtMs;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -601,6 +598,19 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         }
     }
 
+    public void reloadTerminalToolbarFromProperties() {
+        /*
+        CDXC:AndroidSettings 2026-05-18-11:27:
+        The Ghostex in-drawer Settings page edits Termux's built-in extra-keys config. Reload the existing toolbar from the current properties cache so users can test key rows and key display styles without leaving the active terminal.
+        */
+        if (mTermuxTerminalExtraKeys != null) mTermuxTerminalExtraKeys.reloadExtraKeys();
+        if (mExtraKeysView != null && mTermuxTerminalExtraKeys != null) {
+            mExtraKeysView.setButtonTextAllCaps(mProperties.shouldExtraKeysTextBeAllCaps());
+            mExtraKeysView.reload(mTermuxTerminalExtraKeys.getExtraKeysInfo(), mTerminalToolbarDefaultHeight);
+        }
+        setTerminalToolbarHeight();
+    }
+
     private void saveTerminalToolbarTextInput(Bundle savedInstanceState) {
         if (savedInstanceState == null) return;
 
@@ -670,26 +680,31 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             return true;
         });
 
-        View floatingImageButton = findViewById(R.id.ghostex_image_attach_fab);
-        if (floatingImageButton != null) floatingImageButton.setOnClickListener(v -> openGhostexImagePicker());
+        View floatingFileButton = findViewById(R.id.ghostex_file_attach_fab);
+        if (floatingFileButton != null) floatingFileButton.setOnClickListener(v -> openGhostexFilePicker());
+
+        View floatingRefreshButton = findViewById(R.id.ghostex_terminal_refresh_fab);
+        if (floatingRefreshButton != null) floatingRefreshButton.setOnClickListener(v -> {
+            if (mGhostexAndroidController != null) mGhostexAndroidController.refreshCurrentTerminal();
+        });
     }
 
-    private void openGhostexImagePicker() {
+    private void openGhostexFilePicker() {
         /*
-        CDXC:AndroidImageAttach 2026-05-18-01:39:
-        Ghostex Android needs a floating image attach control beside the
-        keyboard button. Use Android's document picker so selected images can be
-        streamed from scoped storage into the SSH upload path without requesting
-        broad storage access.
+        CDXC:AndroidFileAttach 2026-05-18-04:56:
+        Ghostex Android needs a floating attach control for screenshots, images,
+        logs, and other support files. Use Android's document picker so selected
+        files can be streamed from scoped storage into the SSH upload path
+        without requesting broad storage access.
         */
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("image/*");
+        intent.setType("*/*");
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         try {
-            startActivityForResult(intent, REQUEST_GHOSTEX_ATTACH_IMAGE);
+            startActivityForResult(intent, REQUEST_GHOSTEX_ATTACH_FILE);
         } catch (ActivityNotFoundException e) {
-            showToast("No image picker available.", true);
+            showToast("No file picker available.", true);
         }
     }
 
@@ -701,19 +716,13 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     @Override
     public void onBackPressed() {
         if (isGhostexDrawerLayoutInstalled()) {
-            long nowMs = System.currentTimeMillis();
-            if (GhostexBackNavigationPolicy.shouldExit(mLastGhostexBackPressedAtMs, nowMs)) {
-                finishActivityIfNotFinishing();
-                return;
-            }
             /*
-            CDXC:AndroidNavigation 2026-05-18-01:27:
+            CDXC:AndroidNavigation 2026-05-18-04:43:
             Ghostex Android's primary navigation lives in the remote-session
-            sidebar, and phones make left-edge drawer swipes unreliable. Open
-            the sidebar on the first back gesture, then require a second back
-            within five seconds to exit the app.
+            sidebar, and the Android back button must never exit the app in
+            Ghostex mode. Always open or keep open the sidebar; app exit is an
+            explicit drawer action.
             */
-            mLastGhostexBackPressedAtMs = nowMs;
             getDrawer().openDrawer(Gravity.LEFT);
             return;
         }
@@ -933,9 +942,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         Logger.logVerbose(LOG_TAG, "onActivityResult: requestCode: " + requestCode + ", resultCode: "  + resultCode + ", data: "  + IntentUtils.getIntentString(data));
         if (requestCode == PermissionUtils.REQUEST_GRANT_STORAGE_PERMISSION) {
             requestStoragePermission(true);
-        } else if (requestCode == REQUEST_GHOSTEX_ATTACH_IMAGE && resultCode == RESULT_OK && data != null && data.getData() != null) {
+        } else if (requestCode == REQUEST_GHOSTEX_ATTACH_FILE && resultCode == RESULT_OK && data != null && data.getData() != null) {
             if (mGhostexAndroidController != null) {
-                mGhostexAndroidController.attachImageToCurrentTerminal(data.getData());
+                mGhostexAndroidController.attachFileToCurrentTerminal(data.getData());
             }
         }
     }

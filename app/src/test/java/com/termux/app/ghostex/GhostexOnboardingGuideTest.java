@@ -10,7 +10,8 @@ public final class GhostexOnboardingGuideTest {
     First-run onboarding must be complete enough for a release user to set up
     the Mac and phone without guessing. Pin the exact tutorial contract so
     future UI refactors cannot drop Tailscale, Remote Login, Ghostex CLI, zmx,
-    phone SSH tools, saved-machine setup, reconnect, or the SSH/CLI/ZMX model.
+    built-in SSH transport, saved-machine setup, reconnect, or the
+    SSH/CLI/ZMX model.
     */
     @Test
     public void tutorialExplainsFullMacPhoneConnectionSetup() {
@@ -22,8 +23,8 @@ public final class GhostexOnboardingGuideTest {
         Assert.assertTrue(tutorial.contains("Remote Login"));
         Assert.assertTrue(tutorial.contains("command -v ghostex && command -v zmx"));
         Assert.assertTrue(tutorial.contains("Session persistence to zmx"));
-        Assert.assertTrue(tutorial.contains("Install SSH tools"));
-        Assert.assertTrue(tutorial.contains("pkg update -y && pkg install -y openssh sshpass"));
+        Assert.assertTrue(tutorial.contains("built-in Setup panel"));
+        Assert.assertTrue(tutorial.contains("You do not need to install SSH packages on the phone."));
         Assert.assertTrue(tutorial.contains("display name, host, username, and SSH port"));
         Assert.assertTrue(tutorial.contains("reconnect to the last selected machine"));
         Assert.assertTrue(tutorial.contains("asks the Ghostex CLI for the live sidebar list"));

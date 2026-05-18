@@ -125,12 +125,11 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     public void onTitleChanged(@NonNull TerminalSession updatedSession) {
         if (!mActivity.isVisible()) return;
 
-        if (updatedSession != mActivity.getCurrentSession()) {
-            // Only show toast for other sessions than the current one, since the user
-            // probably consciously caused the title change to change in the current session
-            // and don't want an annoying toast for that.
-            mActivity.showToast(toToastTitle(updatedSession), true);
-        }
+        /*
+        CDXC:AndroidTerminalToasts 2026-05-18-06:35:
+        Ghostex Android keeps remote sessions alive while they are not the visible terminal, and agent CLIs often update terminal titles as activity/status metadata.
+        Title changes must refresh drawer/session state silently; offscreen title updates should not flash Termux toasts over the active mobile terminal.
+        */
 
         termuxSessionListNotifyUpdated();
     }

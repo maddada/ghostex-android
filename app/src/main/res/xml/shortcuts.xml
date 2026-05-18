@@ -18,6 +18,10 @@
         Shortcut targetPackage is static XML and must follow Ghostex Android's
         side-by-side runtime package id, while targetClass stays in the
         upstream Java namespace for easier Termux synchronization.
+
+        CDXC:AndroidBranding 2026-05-18-06:41:
+        Static shortcut package references use `io.ghostex` so
+        launcher/package-visible metadata spells the app name correctly.
     -->
 
     <shortcut
@@ -28,7 +32,7 @@
         tools:targetApi="n_mr1">
         <intent
             android:action="android.intent.action.RUN"
-            android:targetPackage="com.ghostx"
+            android:targetPackage="io.ghostex"
             android:targetClass="com.termux.app.TermuxActivity"
             android:name="android.shortcut.conversation"/>
     </shortcut>
@@ -41,10 +45,10 @@
         tools:targetApi="n_mr1">
         <intent
             android:action="android.intent.action.RUN"
-            android:targetPackage="com.ghostx"
+            android:targetPackage="io.ghostex"
             android:targetClass="com.termux.app.TermuxActivity"
             android:name="android.shortcut.conversation">
-            <extra android:name="com.ghostx.app.failsafe_session" android:value="true"/>
+            <extra android:name="io.ghostex.app.failsafe_session" android:value="true"/>
         </intent>
     </shortcut>
 
@@ -56,7 +60,7 @@
         tools:targetApi="n_mr1">
         <intent
             android:action="android.intent.action.VIEW"
-            android:targetPackage="com.ghostx"
+            android:targetPackage="io.ghostex"
             android:targetClass="com.termux.app.activities.SettingsActivity"
             android:name="android.shortcut.conversation"/>
     </shortcut>

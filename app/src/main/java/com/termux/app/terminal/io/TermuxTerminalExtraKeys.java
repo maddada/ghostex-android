@@ -81,6 +81,14 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
         return mExtraKeysInfo;
     }
 
+    public void reloadExtraKeys() {
+        /*
+        CDXC:AndroidSettings 2026-05-18-11:27:
+        Ghostex Android edits Termux's built-in `extra-keys` and `extra-keys-style` properties from the in-drawer Settings page. Expose an explicit reload hook so the toolbar reflects saved config changes without recreating the activity.
+        */
+        setExtraKeys();
+    }
+
     @SuppressLint("RtlHardcoded")
     @Override
     public void onTerminalExtraKeyButtonClick(View view, String key, boolean ctrlDown, boolean altDown, boolean shiftDown, boolean fnDown) {

@@ -76,34 +76,27 @@ public final class GhostexSshCommandBuilder {
     than opening a local Termux shell. Pass project and group context as flags
     so the running main app creates the terminal and applies its active zmx
     persistence setting.
-    */
-    public static String buildSessionListCommand(@NonNull GhostexMachine machine,
-                                                 boolean hasSavedPassword) {
-        ArrayList<String> parts = new ArrayList<>();
-        if (hasSavedPassword) parts.add("command -v sshpass >/dev/null 2>&1 && sshpass -e");
-        parts.add("ssh");
-        parts.add("-p " + machine.port);
-        parts.add("-o ConnectTimeout=8");
-        parts.add("-o StrictHostKeyChecking=accept-new");
-        if (!hasSavedPassword) parts.add("-o BatchMode=yes");
-        parts.add(shellQuote(machine.sshDestination()));
-        parts.add(shellQuote(loginShellCommand("ghostex sessions --json")));
-        return join(parts);
-    }
 
-    public static String buildAttachCommand(@NonNull GhostexMachine machine,
-                                            @NonNull GhostexRemoteSession session,
-                                            boolean hasSavedPassword) {
-        String sessionId = requireSessionId(session);
+    CDXC:AndroidSidebar 2026-05-18-16:13:
+    Android project reordering must be a Mac-side Ghostex CLI action so the
+    desktop app persists the same sidebar order that mobile later receives from
+    `ghostex sessions --json`. Validate direction tokens before shell assembly.
+    */
+    public static String buildCopyableAttachCommand(@NonNull GhostexMachine machine,
+                                                    @NonNull GhostexRemoteSession session) {
+        /*
+        CDXC:AndroidRemoteAttach 2026-05-18-06:51:
+        Copy attach command is a human support affordance, not the Android
+        transport path. Keep it as plain `ssh` syntax without password-helper
+        dependencies while the app itself uses SSHJ for phone-side networking.
+        */
         ArrayList<String> parts = new ArrayList<>();
-        if (hasSavedPassword) parts.add("command -v sshpass >/dev/null 2>&1 && sshpass -e");
         parts.add("ssh");
         parts.add("-tt");
         parts.add("-p " + machine.port);
-        parts.add("-o ConnectTimeout=8");
         parts.add("-o StrictHostKeyChecking=accept-new");
         parts.add(shellQuote(machine.sshDestination()));
-        parts.add(shellQuote(loginShellCommand("ghostex attach --session-id " + shellQuote(sessionId))));
+        parts.add(shellQuote(loginShellCommand(attachRemoteCommand(session))));
         return join(parts);
     }
 
@@ -111,28 +104,58 @@ public final class GhostexSshCommandBuilder {
                                                    @NonNull GhostexRemoteSession session,
                                                    @NonNull String action,
                                                    boolean hasSavedPassword) {
-        if (!isSupportedSessionAction(action)) {
-            throw new IllegalArgumentException("Unsupported Ghostex session action: " + action);
-        }
-        String sessionId = requireSessionId(session);
-        return buildRemoteGhostexCommand(machine, hasSavedPassword,
-            "ghostex " + action + " --session-id " + shellQuote(sessionId) + " --json");
+        return sessionActionRemoteCommand(session, action);
     }
 
     public static String buildRenameSessionCommand(@NonNull GhostexMachine machine,
-                                                   @NonNull GhostexRemoteSession session,
+                                                  @NonNull GhostexRemoteSession session,
                                                   @NonNull String title,
                                                   boolean hasSavedPassword) {
-        String sessionId = requireSessionId(session);
-        return buildRemoteGhostexCommand(machine, hasSavedPassword,
-            "ghostex rename-session --session-id " + shellQuote(sessionId) +
-                " --title=" + shellQuote(title) + " --json");
+        return renameSessionRemoteCommand(session, title);
     }
 
     public static String buildCreateSessionCommand(@NonNull GhostexMachine machine,
                                                    @Nullable String projectId,
                                                    @Nullable String groupId,
                                                    boolean hasSavedPassword) {
+        return createSessionRemoteCommand(projectId, groupId);
+    }
+
+    public static String sessionActionRemoteCommand(@NonNull GhostexRemoteSession session,
+                                                    @NonNull String action) {
+        if (!isSupportedSessionAction(action)) {
+            throw new IllegalArgumentException("Unsupported Ghostex session action: " + action);
+        }
+        String sessionId = requireSessionId(session);
+        return "ghostex " + action + " --session-id " + shellQuote(sessionId) + " --json";
+    }
+
+    public static String attachRemoteCommand(@NonNull GhostexRemoteSession session) {
+        /*
+        CDXC:AndroidRemoteAttach 2026-05-18-04:51:
+        The app-owned SSH attach path and the copyable support command must
+        resolve to the same Mac-side CLI invocation. Keep the remote command
+        separate from any local shell wrapper so Android can open a PTY through
+        SSHJ without depending on Termux package binaries.
+        */
+        return "ghostex attach --session-id " + shellQuote(requireSessionId(session));
+    }
+
+    public static String renameSessionRemoteCommand(@NonNull GhostexRemoteSession session,
+                                                    @NonNull String title) {
+        String sessionId = requireSessionId(session);
+        return "ghostex rename-session --session-id " + shellQuote(sessionId) +
+            " --title=" + shellQuote(title) + " --json";
+    }
+
+    public static String createSessionRemoteCommand(@Nullable String projectId,
+                                                    @Nullable String groupId) {
+        /*
+        CDXC:AndroidSshTransport 2026-05-18-02:56:
+        App-owned SSH exec reuses the same Mac-side command strings that the
+        shell-based prototype used, keeping action quoting in one place while
+        the transport stays independent of Termux package binaries.
+        */
         ArrayList<String> remoteParts = new ArrayList<>();
         remoteParts.add("ghostex create-session --json");
         String cleanProjectId = projectId == null ? "" : projectId.trim();
@@ -143,62 +166,21 @@ public final class GhostexSshCommandBuilder {
         if (!cleanGroupId.isEmpty()) {
             remoteParts.add("--group-id " + shellQuote(cleanGroupId));
         }
-        return buildRemoteGhostexCommand(machine, hasSavedPassword, join(remoteParts));
+        return join(remoteParts);
     }
 
-    public static String buildConnectionCheckCommand(@NonNull GhostexMachine machine,
-                                                     boolean hasSavedPassword) {
-        return buildRemoteGhostexCommand(machine, hasSavedPassword,
-            "command -v ghostex >/dev/null || { printf '%s\\n' 'ghostex not found'; exit 127; }; " +
-                "ghostex android-check --json");
-    }
-
-    public static String buildImageUploadCommand(@NonNull GhostexMachine machine,
-                                                 boolean hasSavedPassword,
-                                                 @NonNull String localPath,
-                                                 @NonNull String remotePath) {
-        /*
-        CDXC:AndroidImageAttach 2026-05-18-01:39:
-        Image attach uploads should use the same saved-machine SSH target and
-        password automation as reconnect and remote actions, then paste a
-        Mac-readable absolute path into the terminal as `[Image #N](path)`.
-        Create the remote directory explicitly instead of relying on scp
-        fallback behavior so failed uploads report the real SSH/scp error.
-        */
-        String mkdirCommand = buildRemoteShellCommand(machine, hasSavedPassword,
-            "mkdir -p " + shellQuote(remoteDirectory(remotePath)));
-        ArrayList<String> scpParts = new ArrayList<>();
-        if (hasSavedPassword) scpParts.add("command -v sshpass >/dev/null 2>&1 && sshpass -e");
-        scpParts.add("scp");
-        scpParts.add("-q");
-        scpParts.add("-P " + machine.port);
-        scpParts.add("-o ConnectTimeout=8");
-        scpParts.add("-o StrictHostKeyChecking=accept-new");
-        if (!hasSavedPassword) scpParts.add("-o BatchMode=yes");
-        scpParts.add(shellQuote(localPath));
-        scpParts.add(shellQuote(machine.sshDestination() + ":" + remotePath));
-        return mkdirCommand + " && " + join(scpParts);
-    }
-
-    public static String buildRemoteGhostexCommand(@NonNull GhostexMachine machine,
-                                                   boolean hasSavedPassword,
-                                                   @NonNull String remoteCommand) {
-        return buildRemoteShellCommand(machine, hasSavedPassword, loginShellCommand(remoteCommand));
-    }
-
-    private static String buildRemoteShellCommand(@NonNull GhostexMachine machine,
-                                                  boolean hasSavedPassword,
-                                                  @NonNull String remoteShellCommand) {
-        ArrayList<String> parts = new ArrayList<>();
-        if (hasSavedPassword) parts.add("command -v sshpass >/dev/null 2>&1 && sshpass -e");
-        parts.add("ssh");
-        parts.add("-p " + machine.port);
-        parts.add("-o ConnectTimeout=8");
-        parts.add("-o StrictHostKeyChecking=accept-new");
-        if (!hasSavedPassword) parts.add("-o BatchMode=yes");
-        parts.add(shellQuote(machine.sshDestination()));
-        parts.add(shellQuote(remoteShellCommand));
-        return join(parts);
+    public static String moveProjectRemoteCommand(@Nullable String projectId,
+                                                  @NonNull String direction) {
+        String cleanProjectId = projectId == null ? "" : projectId.trim();
+        if (cleanProjectId.isEmpty()) {
+            throw new IllegalArgumentException("Ghostex project id is required.");
+        }
+        String cleanDirection = direction.trim();
+        if (!"up".equals(cleanDirection) && !"down".equals(cleanDirection)) {
+            throw new IllegalArgumentException("Unsupported Ghostex project move direction: " + direction);
+        }
+        return "ghostex move-project --json --project-id " + shellQuote(cleanProjectId) +
+            " --direction " + shellQuote(cleanDirection);
     }
 
     public static String shellQuote(@Nullable String value) {
@@ -246,13 +228,6 @@ public final class GhostexSshCommandBuilder {
             builder.append(part);
         }
         return builder.toString();
-    }
-
-    @NonNull
-    private static String remoteDirectory(@NonNull String remotePath) {
-        int slashIndex = remotePath.lastIndexOf('/');
-        if (slashIndex <= 0) return ".";
-        return remotePath.substring(0, slashIndex);
     }
 
 }

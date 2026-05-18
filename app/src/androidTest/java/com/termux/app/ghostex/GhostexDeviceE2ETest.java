@@ -34,7 +34,7 @@ public final class GhostexDeviceE2ETest {
     CDXC:AndroidReleaseE2E 2026-05-17-18:39:
     Optional SSH passwords are read from the debug app's private E2E file, not
     instrumentation arguments, so the release QA command line does not expose
-    SSH secrets while still proving saved-password sshpass paths.
+    SSH secrets while still proving saved-password SSHJ paths.
 
     CDXC:AndroidReleaseE2E 2026-05-17-18:52:
     Delete the private E2E password file immediately after the first
@@ -53,11 +53,6 @@ public final class GhostexDeviceE2ETest {
     public void remoteMachinePassesGhostexZmxReadinessCheck() {
         E2EConfig config = E2EConfig.fromInstrumentationArguments();
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        GhostexPhoneSetup.Status phoneStatus = new GhostexPhoneSetup(context)
-            .check(config.password != null && !config.password.isEmpty());
-
-        Assert.assertTrue(phoneStatus.message, phoneStatus.ready);
-
         GhostexSessionInventoryClient.Result result = new GhostexSessionInventoryClient(context)
             .checkConnection(config.machine, config.password);
 
@@ -102,8 +97,7 @@ public final class GhostexDeviceE2ETest {
         Assert.assertNotNull("Requested session id was not present in the remote Ghostex inventory.",
             session);
 
-        String command = GhostexSshCommandBuilder.buildAttachCommand(config.machine, session,
-            config.password != null && !config.password.isEmpty());
+        String command = GhostexSshCommandBuilder.buildCopyableAttachCommand(config.machine, session);
         Assert.assertTrue(command, command.contains("ghostex attach"));
         Assert.assertTrue(command, command.contains("--session-id"));
         Assert.assertTrue(command, command.contains(session.sessionId));

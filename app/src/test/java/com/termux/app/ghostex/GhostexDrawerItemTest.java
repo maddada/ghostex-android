@@ -54,10 +54,15 @@ public final class GhostexDrawerItemTest {
     Missing project metadata should not merge unrelated sessions into one
     project action target. Keep unknown-project groups scoped by session id.
 
-    CDXC:AndroidSidebar 2026-05-17-21:09:
-    Project headers need the same priority ordering as the best session in each
-    group, so Android does not preserve stale or arbitrary CLI project order
-    when attention or recent work should rise to the top.
+    CDXC:AndroidSidebar 2026-05-18-16:13:
+    Project headers preserve the CLI-provided desktop sidebar order. Android only
+    sorts sessions inside each project, because moving project placement must be
+    persisted by the desktop app and reflected back through the CLI inventory.
+
+    CDXC:AndroidSidebar 2026-05-18-16:13:
+    Project collapse is a local Android disclosure state keyed by project group,
+    so a collapsed project should keep its header and counts while hiding child
+    sessions across drawer rebuilds.
 
     CDXC:AndroidSidebar 2026-05-17-20:03:
     Live macOS sidebar inventory can carry `groupId` and `groupTitle`. Android
@@ -81,17 +86,17 @@ public final class GhostexDrawerItemTest {
 
         Assert.assertEquals(5, items.size());
         Assert.assertEquals(GhostexDrawerItem.Type.PROJECT_HEADER, items.get(0).type);
-        Assert.assertEquals("Website", items.get(0).projectTitle);
-        Assert.assertEquals("project-b", items.get(0).projectId);
-        Assert.assertEquals(1, items.get(0).attentionCount);
+        Assert.assertEquals("Ghostex", items.get(0).projectTitle);
+        Assert.assertEquals("project-a", items.get(0).projectId);
+        Assert.assertEquals(2, items.get(0).sessionCount);
+        Assert.assertEquals(1, items.get(0).workingCount);
+        Assert.assertEquals(1, items.get(0).sleepingCount);
         Assert.assertEquals(GhostexDrawerItem.Type.SESSION, items.get(1).type);
-        Assert.assertEquals(GhostexDrawerItem.Type.PROJECT_HEADER, items.get(2).type);
-        Assert.assertEquals("Ghostex", items.get(2).projectTitle);
-        Assert.assertEquals("project-a", items.get(2).projectId);
-        Assert.assertEquals(2, items.get(2).sessionCount);
-        Assert.assertEquals(1, items.get(2).workingCount);
-        Assert.assertEquals(1, items.get(2).sleepingCount);
-        Assert.assertEquals(GhostexDrawerItem.Type.SESSION, items.get(3).type);
+        Assert.assertEquals(GhostexDrawerItem.Type.SESSION, items.get(2).type);
+        Assert.assertEquals(GhostexDrawerItem.Type.PROJECT_HEADER, items.get(3).type);
+        Assert.assertEquals("Website", items.get(3).projectTitle);
+        Assert.assertEquals("project-b", items.get(3).projectId);
+        Assert.assertEquals(1, items.get(3).attentionCount);
         Assert.assertEquals(GhostexDrawerItem.Type.SESSION, items.get(4).type);
     }
 
@@ -112,7 +117,7 @@ public final class GhostexDrawerItemTest {
     }
 
     @Test
-    public void buildItemsSortsProjectGroupsByBestSessionPriority() {
+    public void buildItemsPreservesCliProjectGroupOrder() {
         ArrayList<GhostexRemoteSession> sessions = new ArrayList<>();
         sessions.add(session("idle-new", "project-idle", "Idle Project", "idle", false, "2026-05-17T08:59:00Z"));
         sessions.add(session("working-old", "project-working", "Working Project", "working", false, "2026-05-17T08:00:00Z"));
@@ -120,9 +125,29 @@ public final class GhostexDrawerItemTest {
 
         List<GhostexDrawerItem> items = GhostexDrawerItem.buildItems(sessions);
 
-        Assert.assertEquals("Attention Project", items.get(0).projectTitle);
+        Assert.assertEquals("Idle Project", items.get(0).projectTitle);
         Assert.assertEquals("Working Project", items.get(2).projectTitle);
-        Assert.assertEquals("Idle Project", items.get(4).projectTitle);
+        Assert.assertEquals("Attention Project", items.get(4).projectTitle);
+    }
+
+    @Test
+    public void buildItemsHidesCollapsedProjectSessions() {
+        ArrayList<GhostexRemoteSession> sessions = new ArrayList<>();
+        sessions.add(session("1", "project-a", "Ghostex", "working", false));
+        sessions.add(session("2", "project-a", "Ghostex", "idle", false));
+        sessions.add(session("3", "project-b", "Website", "idle", false));
+        java.util.HashSet<String> collapsedProjectKeys = new java.util.HashSet<>();
+        collapsedProjectKeys.add("id:project-a");
+
+        List<GhostexDrawerItem> items = GhostexDrawerItem.buildItems(sessions, collapsedProjectKeys);
+
+        Assert.assertEquals(3, items.size());
+        Assert.assertEquals("Ghostex", items.get(0).projectTitle);
+        Assert.assertTrue(items.get(0).collapsed);
+        Assert.assertEquals(2, items.get(0).sessionCount);
+        Assert.assertEquals("Website", items.get(1).projectTitle);
+        Assert.assertFalse(items.get(1).collapsed);
+        Assert.assertEquals(GhostexDrawerItem.Type.SESSION, items.get(2).type);
     }
 
     @Test
@@ -140,7 +165,7 @@ public final class GhostexDrawerItemTest {
     @Test
     public void stateCardRowsAreEnabledForRecoveryActions() {
         ArrayList<GhostexDrawerItem> items = new ArrayList<>();
-        items.add(GhostexDrawerItem.stateCard("Phone setup required", "Install SSH tools.", "Tap for setup actions."));
+        items.add(GhostexDrawerItem.stateCard("Connection needs attention", "Review setup actions.", "Tap for setup actions."));
         GhostexRemoteSessionAdapter adapter = new GhostexRemoteSessionAdapter(RuntimeEnvironment.getApplication(), items);
 
         Assert.assertTrue(adapter.isEnabled(0));

@@ -14,8 +14,8 @@ public final class GhostexConnectionRecovery {
 
     CDXC:AndroidConnectionRecovery 2026-05-17-14:04:
     Host-key mismatch recovery is machine-specific. When Check connection sees
-    that error, prompt for the selected target's known_hosts reset instead of
-    leaving users to find the Host key action manually.
+    that error, prompt for the selected target's saved SSHJ host-key reset
+    instead of leaving users to find the Host key action manually.
     */
     public static boolean shouldPromptForPassword(@Nullable String errorMessage) {
         if (errorMessage == null) return false;

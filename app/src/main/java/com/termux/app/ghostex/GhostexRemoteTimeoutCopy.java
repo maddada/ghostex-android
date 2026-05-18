@@ -25,13 +25,13 @@ public final class GhostexRemoteTimeoutCopy {
         return "Timed out while running ghostex " + action + ". Open Tailscale and retry this session action.";
     }
 
-    public static String uploadingImage() {
+    public static String uploadingFile() {
         /*
-        CDXC:AndroidImageAttach 2026-05-18-01:39:
-        Image attach uses scp rather than the Ghostex CLI, so timeout recovery
+        CDXC:AndroidFileAttach 2026-05-18-04:56:
+        File attach uses scp rather than the Ghostex CLI, so timeout recovery
         copy must describe file upload instead of a `ghostex` session action.
         */
-        return "Timed out while uploading the image. Open Tailscale and retry image attach.";
+        return "Timed out while uploading the file. Open Tailscale and retry file attach.";
     }
 
     public static String renaming() {
