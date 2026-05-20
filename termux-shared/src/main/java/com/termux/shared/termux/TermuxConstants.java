@@ -349,9 +349,13 @@ public final class TermuxConstants {
     /**
      * CDXC:AndroidBranding 2026-05-17-23:39:
      * Runtime messages, notifications, and crash reports should identify the
-     * side-by-side client as Ghostex Android instead of upstream Termux.
+     * side-by-side client as Ghostex instead of upstream Termux.
+     *
+     * CDXC:AndroidBranding 2026-05-20-19:17:
+     * The Android launcher/app-drawer label should be the short product name
+     * `Ghostex`; use the same runtime app name for system-facing strings.
      */
-    public static final String TERMUX_APP_NAME = "Ghostex Android"; // Default: "Termux"
+    public static final String TERMUX_APP_NAME = "Ghostex"; // Default: "Termux"
     /**
      * CDXC:AndroidSideBySideInstall 2026-05-17-23:39:
      * Ghostex Android must install beside upstream Termux on the same phone.

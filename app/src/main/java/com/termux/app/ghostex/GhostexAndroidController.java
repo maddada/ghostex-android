@@ -89,6 +89,7 @@ public final class GhostexAndroidController {
     private final HashMap<String, String> sessionPasswords = new HashMap<>();
 
     private GhostexRemoteSessionAdapter sessionAdapter;
+    private ListView sessionsList;
     private TextView statusView;
     private TextView machinesPageStatusView;
     private TextView settingsPageStatusView;
@@ -357,10 +358,32 @@ public final class GhostexAndroidController {
     Android machine.
 
     CDXC:AndroidRemoteSessions 2026-05-18-02:31:
-    Project headers expose a plus button beside the session-count pill for
+    Project headers expose a plus button beside the project title for
     creating a new terminal from Android. The action must call the remote
     Ghostex CLI so the Mac app creates the session with its current zmx
     persistence setting instead of Android creating a local Termux terminal.
+
+    CDXC:AndroidSidebar 2026-05-19-10:15:
+    The sessions page status line should name the connected machine only. Do
+    not append total ZMX session counts because Android sidebar density no
+    longer surfaces inventory totals in the header.
+
+    CDXC:AndroidSidebar 2026-05-19-10:45:
+    Rename, create, and remote action refreshes must keep the visible project
+    list mounted instead of replacing it with the Connecting state card. Poll
+    and post-action inventory fetches preserve collapse state and restore scroll
+    by stable project/session keys.
+
+    CDXC:AndroidSidebar 2026-05-19-10:45:
+    Active session highlighting is adapter-owned. The sessions ListView must not
+    use singleChoice selection chrome because it paints blue fills over project
+    headers independent of Ghostex card backgrounds.
+
+    CDXC:AndroidRemoteSessions 2026-05-19-11:20:
+    Creating a session from a project header should attach that new Mac-side
+    terminal immediately and close the drawer, matching macOS sidebar create flow.
+    Use the create-session JSON session id when present, then fall back to the
+    focused or highest-priority session inside the same project.
 
     CDXC:AndroidConnectionManagement 2026-05-18-02:58:
     Saved machines, Tailscale, Setup, Retry, and Add live on a dedicated
@@ -554,7 +577,7 @@ public final class GhostexAndroidController {
         machinesPageList = activity.findViewById(R.id.ghostex_machines_page_list);
         settingsPageList = activity.findViewById(R.id.ghostex_settings_page_list);
         GhostexEdgeToEdgeInsets.applyToReleaseSurface(activity.findViewById(R.id.drawer_layout));
-        ListView sessionsList = activity.findViewById(R.id.terminal_sessions_list);
+        sessionsList = activity.findViewById(R.id.terminal_sessions_list);
         sessionAdapter = new GhostexRemoteSessionAdapter(activity, drawerItems);
         sessionAdapter.setOnProjectSessionCreateListener(item ->
             createRemoteSessionForProject(item, machineStore.getLastMachine()));
@@ -589,7 +612,16 @@ public final class GhostexAndroidController {
         if (openSettingsButton != null) openSettingsButton.setOnClickListener(v -> showSettingsPage());
 
         View refreshSessionsButton = activity.findViewById(R.id.ghostex_refresh_sessions_button);
-        if (refreshSessionsButton != null) refreshSessionsButton.setOnClickListener(v -> reconnectLastMachine(false));
+        if (refreshSessionsButton != null) {
+            /*
+            CDXC:AndroidSidebar 2026-05-20-12:39:
+            The drawer header refresh is a user-visible reconnect control, not
+            a background poll. Always reload through reconnect so credential
+            prompts, selected-machine state, and failure recovery match the
+            Refresh sessions action sheet path in production builds.
+            */
+            refreshSessionsButton.setOnClickListener(v -> reconnectLastMachine(false));
+        }
 
         /*
         CDXC:AndroidNavigation 2026-05-18-04:43:
@@ -1088,10 +1120,20 @@ public final class GhostexAndroidController {
     }
 
     private void reconnectLastMachine(boolean fromStartup) {
-        reconnectLastMachine(fromStartup, null);
+        reconnectLastMachine(fromStartup, null, false);
     }
 
     private void reconnectLastMachine(boolean fromStartup, @Nullable String successStatusOverride) {
+        reconnectLastMachine(fromStartup, successStatusOverride, false);
+    }
+
+    private void refreshSessionInventory(@Nullable String successStatusOverride) {
+        reconnectLastMachine(false, successStatusOverride, true);
+    }
+
+    private void reconnectLastMachine(boolean fromStartup,
+                                      @Nullable String successStatusOverride,
+                                      boolean preserveDrawerList) {
         GhostexMachine machine = machineStore.getLastMachine();
         if (machine == null) {
             reconnectGeneration++;
@@ -1112,14 +1154,19 @@ public final class GhostexAndroidController {
         lastReconnectAttemptAt = System.currentTimeMillis();
         machineStore.setLastMachineId(machine.id);
         sessionAdapter.setCurrentMachineId(machine.id);
-        setStatus("Connecting to " + machine.displayLabel() + "...");
-        setDrawerState("Connecting", "Opening SSH to " + machine.displayLabel() + " and asking the Ghostex CLI for ZMX-backed sessions.", "Keep Tailscale online on both devices.");
+        boolean keepVisibleList = preserveDrawerList && hasVisibleSessionList();
+        if (keepVisibleList) {
+            setStatus("Refreshing sessions on " + machine.displayLabel() + "...");
+        } else {
+            setStatus("Connecting to " + machine.displayLabel() + "...");
+            setDrawerState("Connecting", "Opening SSH to " + machine.displayLabel() + " and asking the Ghostex CLI for ZMX-backed sessions.", "Keep Tailscale online on both devices.");
+        }
         executor.execute(() -> {
             String password = readPassword(machine);
             GhostexSessionInventoryClient.Result result = inventoryClient.fetchSessions(machine, password);
             mainHandler.post(() -> {
                 if (isCurrentReconnect(requestGeneration, requestMachineId)) {
-                    handleInventoryResult(machine, result, successStatusOverride);
+                    handleInventoryResult(machine, result, successStatusOverride, keepVisibleList);
                 }
             });
         });
@@ -1205,7 +1252,21 @@ public final class GhostexAndroidController {
     private void handleInventoryResult(@NonNull GhostexMachine machine,
                                        @NonNull GhostexSessionInventoryClient.Result result,
                                        @Nullable String successStatusOverride) {
+        handleInventoryResult(machine, result, successStatusOverride, false);
+    }
+
+    private void handleInventoryResult(@NonNull GhostexMachine machine,
+                                       @NonNull GhostexSessionInventoryClient.Result result,
+                                       @Nullable String successStatusOverride,
+                                       boolean preserveDrawerList) {
         if (!result.ok) {
+            if (preserveDrawerList && hasVisibleSessionList()) {
+                setStatus(result.errorMessage == null
+                    ? "Could not refresh sessions."
+                    : "Session refresh failed: " + result.errorMessage);
+                maybePromptForPasswordAfterFailure(machine, result.errorMessage);
+                return;
+            }
             remoteSessions.clear();
             setDrawerState("Connection needs attention",
                 result.errorMessage == null ? "Could not connect to the selected machine." : result.errorMessage,
@@ -1216,7 +1277,7 @@ public final class GhostexAndroidController {
             maybePromptForPasswordAfterFailure(machine, result.errorMessage);
             return;
         }
-        applyInventorySessions(machine, result.sessions, successStatusOverride);
+        applyInventorySessions(machine, result.sessions, successStatusOverride, preserveDrawerList);
         activity.getDrawer().openDrawer(Gravity.LEFT);
     }
 
@@ -1227,12 +1288,20 @@ public final class GhostexAndroidController {
             setStatus("Session refresh failed: " + message);
             return;
         }
-        applyInventorySessions(machine, result.sessions, null);
+        applyInventorySessions(machine, result.sessions, null, hasVisibleSessionList());
     }
 
     private void applyInventorySessions(@NonNull GhostexMachine machine,
                                         @NonNull List<GhostexRemoteSession> sessions,
                                         @Nullable String successStatusOverride) {
+        applyInventorySessions(machine, sessions, successStatusOverride, false);
+    }
+
+    private void applyInventorySessions(@NonNull GhostexMachine machine,
+                                        @NonNull List<GhostexRemoteSession> sessions,
+                                        @Nullable String successStatusOverride,
+                                        boolean preserveDrawerList) {
+        GhostexDrawerScrollAnchor scrollAnchor = preserveDrawerList ? captureDrawerScrollAnchor() : null;
         remoteSessions.clear();
         remoteSessions.addAll(sessions);
         sessionAdapter.setCurrentMachineId(machine.id);
@@ -1243,13 +1312,51 @@ public final class GhostexAndroidController {
         } else {
             rebuildDrawerItems();
         }
-        sessionAdapter.notifyDataSetChanged();
+        notifyDrawerAdapterPreservingScroll(scrollAnchor);
         GhostexMachine connectedMachine = GhostexMachineManagementPolicy.connectedMachineRecord(
             currentMatchingMachine(machine), System.currentTimeMillis());
         if (connectedMachine != null) machineStore.saveMachine(connectedMachine);
         setStatus(successStatusOverride != null ? successStatusOverride : sessions.isEmpty()
             ? "Connected. No ZMX-backed Ghostex sessions are running."
-            : "Connected to " + machine.displayLabel() + " · " + sessions.size() + " ZMX sessions");
+            : "Connected to " + machine.displayLabel());
+    }
+
+    private boolean hasVisibleSessionList() {
+        for (GhostexDrawerItem item : drawerItems) {
+            if (item.type == GhostexDrawerItem.Type.PROJECT_HEADER ||
+                item.type == GhostexDrawerItem.Type.SESSION) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void notifyDrawerAdapterPreservingScroll(@Nullable GhostexDrawerScrollAnchor scrollAnchor) {
+        sessionAdapter.notifyDataSetChanged();
+        restoreDrawerScrollAnchor(scrollAnchor);
+    }
+
+    @Nullable
+    private GhostexDrawerScrollAnchor captureDrawerScrollAnchor() {
+        if (sessionsList == null) return null;
+        int position = sessionsList.getFirstVisiblePosition();
+        if (position < 0 || position >= drawerItems.size()) return null;
+        String anchorKey = GhostexDrawerScrollAnchor.keyForItem(drawerItems.get(position));
+        if (anchorKey == null) return null;
+        View child = sessionsList.getChildAt(0);
+        int offset = child == null ? 0 : child.getTop();
+        return new GhostexDrawerScrollAnchor(anchorKey, offset);
+    }
+
+    private void restoreDrawerScrollAnchor(@Nullable GhostexDrawerScrollAnchor scrollAnchor) {
+        if (scrollAnchor == null || sessionsList == null) return;
+        for (int index = 0; index < drawerItems.size(); index++) {
+            String anchorKey = GhostexDrawerScrollAnchor.keyForItem(drawerItems.get(index));
+            if (scrollAnchor.anchorKey.equals(anchorKey)) {
+                sessionsList.setSelectionFromTop(index, scrollAnchor.topOffset);
+                return;
+            }
+        }
     }
 
     private void attachRemoteSession(@NonNull GhostexRemoteSession remoteSession) {
@@ -1475,8 +1582,9 @@ public final class GhostexAndroidController {
         } else {
             collapsedProjectKeys.add(projectItem.projectKey);
         }
+        GhostexDrawerScrollAnchor scrollAnchor = captureDrawerScrollAnchor();
         rebuildDrawerItems();
-        sessionAdapter.notifyDataSetChanged();
+        notifyDrawerAdapterPreservingScroll(scrollAnchor);
     }
 
     private void pruneCollapsedProjectKeys() {
@@ -1563,7 +1671,7 @@ public final class GhostexAndroidController {
         actions.add(new GhostexAction("Kill", "Stop this remote session on the Mac.", true, () -> confirmKillRemoteSession(openerMachine, session)));
         actions.add(new GhostexAction("Copy attach command", "Copy the SSH command for this session.", false, () -> copyAttachCommand(openerMachine, session)));
         actions.add(new GhostexAction("Refresh sessions", "Reload the ZMX session list from the Mac.", false, () -> {
-            if (canRunRemoteSidebarAction(openerMachine, "refreshing sessions")) reconnectLastMachine(false);
+            if (canRunRemoteSidebarAction(openerMachine, "refreshing sessions")) refreshSessionInventory(null);
         }));
         actions.add(new GhostexAction("Details", "Show provider and project metadata.", false, () -> showSessionDetails(openerMachine, session)));
         showActionSheet(session.title.isEmpty() ? "Ghostex Session" : session.title,
@@ -1590,7 +1698,7 @@ public final class GhostexAndroidController {
                 () -> runMoveProjectAction("down", openerMachine, projectItem)));
         }
         actions.add(new GhostexAction("Refresh sessions", "Reload this project from the Mac.", false, () -> {
-            if (canRunRemoteSidebarAction(openerMachine, "refreshing sessions")) reconnectLastMachine(false);
+            if (canRunRemoteSidebarAction(openerMachine, "refreshing sessions")) refreshSessionInventory(null);
         }));
         actions.add(new GhostexAction("Wake project sessions", "Wake every ZMX session in this project.", false,
             () -> runProjectSessionAction("wake", openerMachine, projectItem, projectSessions)));
@@ -1697,7 +1805,7 @@ public final class GhostexAndroidController {
                 if (!isCurrentRemoteAction(requestGeneration, machine)) return;
                 if (summary.hasSuccesses()) {
                     evictLifecycleChangedWarmSessions(machine, action, summary.successfulSessions());
-                    reconnectLastMachine(false, summary.hasFailures()
+                    refreshSessionInventory(summary.hasFailures()
                         ? "Some project sessions changed, but one action failed: " + summary.lastErrorMessage()
                         : GhostexRemoteActionFeedback.projectSuccess(action, title, summary.successfulSessions().size()));
                 }
@@ -1749,7 +1857,7 @@ public final class GhostexAndroidController {
                     return;
                 }
                 evictLifecycleChangedWarmSessions(machine, action, session);
-                reconnectLastMachine(false, GhostexRemoteActionFeedback.singleSuccess(action, session));
+                refreshSessionInventory(GhostexRemoteActionFeedback.singleSuccess(action, session));
             });
         });
     }
@@ -1773,9 +1881,58 @@ public final class GhostexAndroidController {
                         () -> createRemoteSessionForProject(projectItem, machine));
                     return;
                 }
-                reconnectLastMachine(false, "Created a Ghostex session in " + projectItem.projectTitle + ".");
+                finishCreateRemoteSession(machine, projectItem, result.createdSessionId, requestGeneration);
             });
         });
+    }
+
+    private void finishCreateRemoteSession(@NonNull GhostexMachine machine,
+                                           @NonNull GhostexDrawerItem projectItem,
+                                           @Nullable String createdSessionId,
+                                           long requestGeneration) {
+        executor.execute(() -> {
+            String password = readPassword(machine);
+            GhostexSessionInventoryClient.Result inventoryResult =
+                inventoryClient.fetchSessions(machine, password);
+            mainHandler.post(() -> {
+                if (!isCurrentRemoteAction(requestGeneration, machine)) return;
+                String successStatus = "Created a Ghostex session in " + projectItem.projectTitle + ".";
+                if (!inventoryResult.ok) {
+                    setStatus(inventoryResult.errorMessage == null
+                        ? successStatus + " Could not refresh the session list."
+                        : successStatus + " " + inventoryResult.errorMessage);
+                    return;
+                }
+                applyInventorySessions(machine, inventoryResult.sessions, successStatus, true);
+                GhostexRemoteSession createdSession = resolveCreatedSession(
+                    inventoryResult.sessions, projectItem, createdSessionId);
+                if (createdSession != null) {
+                    attachRemoteSession(machine, createdSession);
+                }
+            });
+        });
+    }
+
+    @Nullable
+    private GhostexRemoteSession resolveCreatedSession(@NonNull List<GhostexRemoteSession> sessions,
+                                                       @NonNull GhostexDrawerItem projectItem,
+                                                       @Nullable String createdSessionId) {
+        if (createdSessionId != null && !createdSessionId.isEmpty()) {
+            for (GhostexRemoteSession session : sessions) {
+                if (createdSessionId.equals(session.sessionId)) return session;
+            }
+        }
+        GhostexRemoteSession focused = null;
+        GhostexRemoteSession preferred = null;
+        for (GhostexRemoteSession session : sessions) {
+            if (!projectItem.containsSession(session)) continue;
+            if (session.isFocused) focused = session;
+            if (preferred == null ||
+                GhostexSessionCardFormatter.compareForSidebarOrder(preferred, session) > 0) {
+                preferred = session;
+            }
+        }
+        return focused != null ? focused : preferred;
     }
 
     private void runMoveProjectAction(@NonNull String direction,
@@ -1798,7 +1955,7 @@ public final class GhostexAndroidController {
                         () -> runMoveProjectAction(direction, machine, projectItem));
                     return;
                 }
-                reconnectLastMachine(false, "Moved " + projectItem.projectTitle + " " + direction + ".");
+                refreshSessionInventory("Moved " + projectItem.projectTitle + " " + direction + ".");
             });
         });
     }
@@ -1862,7 +2019,7 @@ public final class GhostexAndroidController {
                         () -> renameRemoteSession(machine, session, title));
                     return;
                 }
-                reconnectLastMachine(false, GhostexRemoteActionFeedback.renameSuccess(session));
+                refreshSessionInventory(GhostexRemoteActionFeedback.renameSuccess(session));
             });
         });
     }

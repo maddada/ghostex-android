@@ -117,6 +117,21 @@ public final class GhostexSessionInventoryClientTest {
     }
 
     @Test
+    public void parseCreatedSessionIdReadsCompactCreateSessionPayload() throws Exception {
+        String output = "Last login\n" +
+            "{\"ok\":true,\"revision\":12,\"session\":{\"sessionId\":\"session-new\",\"title\":\"Ghostex\"}}\n";
+
+        Assert.assertEquals("session-new", GhostexSessionInventoryClient.parseCreatedSessionId(output));
+    }
+
+    @Test
+    public void parseCreatedSessionIdIgnoresFailedCreatePayload() throws Exception {
+        String output = "{\"ok\":false,\"error\":\"Could not create session.\"}";
+
+        Assert.assertNull(GhostexSessionInventoryClient.parseCreatedSessionId(output));
+    }
+
+    @Test
     public void summarizesPermissionDeniedForSavedPassword() {
         String message = GhostexSessionInventoryClient.summarizeFailure(
             "Permission denied, please try again.", true);

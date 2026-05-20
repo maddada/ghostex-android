@@ -1,5 +1,6 @@
 package com.termux.app.ghostex;
 
+import android.annotation.TargetApi;
 import android.content.Context;
 import android.content.ContentUris;
 import android.content.ContentResolver;
@@ -157,6 +158,7 @@ public final class GhostexFileLogger {
     }
 
     @Nullable
+    @TargetApi(Build.VERSION_CODES.Q)
     private static Uri findOrCreateDownloadsLog(@NonNull Context context) {
         Uri collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
         String relativePath = Environment.DIRECTORY_DOWNLOADS + "/" + LOG_FOLDER_NAME + "/";
@@ -184,6 +186,7 @@ public final class GhostexFileLogger {
         }
     }
 
+    @TargetApi(Build.VERSION_CODES.Q)
     private static void cleanupDownloadsMediaStore(@NonNull Context context) {
         Uri collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
         String relativePath = Environment.DIRECTORY_DOWNLOADS + "/" + LOG_FOLDER_NAME + "/";

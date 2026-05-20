@@ -2,7 +2,7 @@
 
 <!DOCTYPE resources [
     <!ENTITY TERMUX_PACKAGE_NAME "io.ghostex">
-    <!ENTITY TERMUX_APP_NAME "Ghostex Android">
+    <!ENTITY TERMUX_APP_NAME "Ghostex">
     <!ENTITY TERMUX_API_APP_NAME "Termux:API">
     <!ENTITY TERMUX_BOOT_APP_NAME "Termux:Boot">
     <!ENTITY TERMUX_FLOAT_APP_NAME "Termux:Float">
@@ -14,8 +14,9 @@
 
 <resources>
 
-    <!-- CDXC:AndroidSideBySideInstall 2026-05-17-23:39: Shared runtime strings should describe Ghostex Android's side-by-side private prefix, not upstream Termux's `/data/data/com.termux` prefix. -->
+    <!-- CDXC:AndroidSideBySideInstall 2026-05-17-23:39: Shared runtime strings should describe Ghostex's side-by-side private prefix, not upstream Termux's `/data/data/com.termux` prefix. -->
     <!-- CDXC:AndroidBranding 2026-05-18-06:41: Shared runtime strings use `io.ghostex` so package-visible Android surfaces spell Ghostex correctly while preserving bootstrap prefix byte length. -->
+    <!-- CDXC:AndroidBranding 2026-05-20-19:17: Shared app-name resources use the short launcher label `Ghostex` so system settings, package labels, and plugin-facing strings match the app drawer. -->
 
     <string name="msg_directory_absolute_path">%1$s Directory Absolute Path: \"%2$s\"</string>
 

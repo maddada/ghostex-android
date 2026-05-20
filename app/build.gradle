@@ -101,7 +101,7 @@ android {
         // CDXC:AndroidBranding 2026-05-17-10:13: Release builds should present as Ghostex Android while retaining the Termux Java namespace for upstream sync.
         // CDXC:AndroidBranding 2026-05-17-10:37: APK artifacts use a Ghostex Android filename so release testing does not ship Termux-branded build outputs from this Android submodule.
         // CDXC:AndroidSideBySideInstall 2026-05-17-23:39: Manifest package-sensitive surfaces must use the Ghostex runtime id so Android can install Ghostex beside upstream Termux.
-        manifestPlaceholders.TERMUX_APP_NAME = "Ghostex Android"
+        manifestPlaceholders.TERMUX_APP_NAME = "Ghostex"
         manifestPlaceholders.TERMUX_API_APP_NAME = "Termux:API"
         manifestPlaceholders.TERMUX_BOOT_APP_NAME = "Termux:Boot"
         manifestPlaceholders.TERMUX_FLOAT_APP_NAME = "Termux:Float"
@@ -1251,12 +1251,12 @@ task verifyGhostexReleaseDrawerSurface() {
         }
         def sessionAdapterFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexRemoteSessionAdapter.java")
         def sessionAdapterText = sessionAdapterFile.getText("UTF-8")
-        def countIndex = sessionAdapterText.indexOf("count.setTag(\"projectCount\")")
+        def titleIndex = sessionAdapterText.indexOf("title.setTag(\"projectTitle\")")
         def createIndex = sessionAdapterText.indexOf("create.setTag(\"projectCreate\")")
         def actionsIndex = sessionAdapterText.indexOf("actions.setTag(\"projectActions\")")
-        if (countIndex < 0 || createIndex < countIndex || actionsIndex < createIndex ||
+        if (titleIndex < 0 || createIndex < titleIndex || actionsIndex < createIndex ||
+            sessionAdapterText.contains("count.setTag(\"projectCount\")") ||
             !sessionAdapterText.contains("title.setTextSize(15)") ||
-            !sessionAdapterText.contains("count.setTextSize(13)") ||
             !sessionAdapterText.contains("create.setTextSize(15)") ||
             !sessionAdapterText.contains("new LinearLayout.LayoutParams(dp(context, 32), dp(context, 32))") ||
             !sessionAdapterText.contains("actions.setPadding(dp(context, 10), dp(context, 8), dp(context, 10), dp(context, 8))") ||
@@ -1266,7 +1266,7 @@ task verifyGhostexReleaseDrawerSurface() {
             !sessionAdapterText.contains("projectActionsListener.onOpenProjectActions(item)") ||
             !sessionAdapterText.contains("setOnProjectToggleListener") ||
             !sessionAdapterText.contains("projectToggleListener.onToggleProject(item)")) {
-            violations.add(sessionAdapterFile.name + ": project header title/count/plus must share 32dp height, vertical dots must stay smaller, and header taps must toggle collapse")
+            violations.add(sessionAdapterFile.name + ": project header title/plus must share 32dp height without a session-count pill, vertical dots must stay smaller, and header taps must toggle collapse")
         }
         if (!new File(projectDir, "src/main/res/drawable/ic_ghostex_more_vertical.xml").isFile()) {
             violations.add("missing ic_ghostex_more_vertical.xml")
@@ -1274,6 +1274,17 @@ task verifyGhostexReleaseDrawerSurface() {
         if (!controllerText.contains("setOnProjectActionsListener") ||
             !controllerText.contains("showProjectContextMenu(item, machineStore.getLastMachine())")) {
             violations.add(controllerFile.name + ": project overflow button must open the existing project action sheet")
+        }
+        if (!controllerText.contains("finishCreateRemoteSession") ||
+            !controllerText.contains("resolveCreatedSession") ||
+            !controllerText.contains("attachRemoteSession(machine, createdSession)")) {
+            violations.add(controllerFile.name + ": project-header create-session must refresh inventory, attach the created session, and close the drawer")
+        }
+        def inventoryClientFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexSessionInventoryClient.java")
+        def inventoryClientText = inventoryClientFile.isFile() ? inventoryClientFile.getText("UTF-8") : ""
+        if (!inventoryClientText.contains("parseCreatedSessionId") ||
+            !inventoryClientText.contains("Result.createSuccess")) {
+            violations.add(inventoryClientFile.name + ": create-session must parse the Mac CLI created session id from JSON")
         }
         if (!controllerText.contains("collapsedProjectKeys") ||
             !controllerText.contains("GhostexDrawerItem.buildItems(remoteSessions, collapsedProjectKeys)") ||
@@ -1371,7 +1382,10 @@ task verifyGhostexReleaseDrawerSurface() {
             "GhostexPalette.CARD_ACTIVE",
             "GhostexPalette.STATUS_WORKING",
             "private GradientDrawable sessionBackground",
-            "private GradientDrawable badgeBackground",
+            "title.setTag(\"title\")",
+            "agentIcon.setTag(\"agentIcon\")",
+            "GhostexSessionAgentIcon.drawableResForSession(session)",
+            "row.setMinimumHeight(dp(context, 44))",
             "drawable.setStroke(dp(context, 1), active ? GhostexPalette.BUTTON : GhostexPalette.BORDER);"
         ].each { requiredSnippet ->
             if (!remoteSessionAdapterText.contains(requiredSnippet)) {
@@ -1381,8 +1395,9 @@ task verifyGhostexReleaseDrawerSurface() {
         def remoteSessionFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexRemoteSession.java")
         def remoteSessionText = remoteSessionFile.isFile() ? remoteSessionFile.getText("UTF-8") : ""
         if (!remoteSessionText.contains("trimmedJsonValue(json, \"groupId\")") ||
-            !remoteSessionText.contains("trimmedJsonValue(json, \"groupTitle\")")) {
-            violations.add(remoteSessionFile.name + ": remote session parsing must fall back to Mac sidebar groupId/groupTitle metadata")
+            !remoteSessionText.contains("trimmedJsonValue(json, \"groupTitle\")") ||
+            !remoteSessionText.contains("trimmedJsonValue(json, \"agentIcon\")")) {
+            violations.add(remoteSessionFile.name + ": remote session parsing must preserve Mac sidebar groupId/groupTitle and agentIcon metadata")
         }
         if (!controllerText.contains("GhostexDialogStyler.show(") ||
             controllerText.contains("dialog.show();") ||
@@ -1433,14 +1448,23 @@ task verifyGhostexReleaseVersionIdentity() {
         outside Gradle metadata.
 
         CDXC:AndroidBranding 2026-05-17-22:38:
-        The released launcher identity must say Ghostex Android. Gate the
+        The released launcher identity must say Ghostex. Gate the
         manifest placeholder, application label resource, and source manifest
         wiring so upstream Termux branding cannot return silently.
 
+        CDXC:AndroidBranding 2026-05-20-19:17:
+        The app drawer label should be the short product name `Ghostex`, not
+        `Ghostex Android`. Keep this gate on the launcher label while docs and
+        explanatory Android-specific copy can still use the longer phrase.
+
         CDXC:AndroidBranding 2026-05-17-20:17:
-        Launcher artwork is part of release identity. Gate the adaptive
-        foreground vector plus legacy PNG generator/output so modern and
-        pre-adaptive Android launchers both show the same neutral Ghostex mark.
+        Launcher artwork is part of release identity. Gate the generated PNG
+        dimensions so Android launchers do not regress to stale Termux assets.
+
+        CDXC:AndroidBranding 2026-05-20-18:30:
+        Android launcher artwork should match the macOS desktop app icon.
+        Require the generator to use the macOS AppIcon 1024px source and avoid
+        the previous separate adaptive vector terminal glyph.
         */
         if (android.defaultConfig.versionName == "0.118.0") {
             throw new GradleException("Ghostex Android release versionName must not default to upstream Termux 0.118.0. Set GHOSTEX_ANDROID_VERSION_NAME for distribution builds.")
@@ -1460,32 +1484,19 @@ task verifyGhostexReleaseVersionIdentity() {
         }
         def stringsText = new File(projectDir, "src/main/res/values/strings.xml").getText("UTF-8")
         def manifestText = new File(projectDir, "src/main/AndroidManifest.xml").getText("UTF-8")
-        if (!buildText.contains("manifestPlaceholders.TERMUX_APP_NAME = \"Ghostex Android\"") ||
-            !stringsText.contains("<!ENTITY TERMUX_APP_NAME \"Ghostex Android\">") ||
+        if (!buildText.contains("manifestPlaceholders.TERMUX_APP_NAME = \"Ghostex\"") ||
+            !stringsText.contains("<!ENTITY TERMUX_APP_NAME \"Ghostex\">") ||
             !stringsText.contains("<string name=\"application_name\">&TERMUX_APP_NAME;</string>") ||
             !manifestText.contains("android:label=\"@string/application_name\"")) {
-            throw new GradleException("Ghostex Android release launcher label must stay wired to Ghostex Android branding.")
+            throw new GradleException("Ghostex Android release launcher label must stay wired to Ghostex branding.")
         }
         def violations = []
-        def foreground = new File(projectDir, "src/main/res/drawable/ic_foreground.xml")
-        def foregroundText = foreground.isFile() ? foreground.getText("UTF-8") : ""
-        ["#1F1F1F", "#7DD3FC", "#FAFAFA", "#F59E0B"].each { required ->
-            if (!foregroundText.contains(required)) {
-                violations.add("ic_foreground.xml missing neutral Ghostex launcher color " + required)
-            }
-        }
-        ["#101820", "#21D19F", "#F3F6FA"].each { stale ->
-            if (foregroundText.contains(stale)) {
-                violations.add("ic_foreground.xml still contains stale launcher color " + stale)
-            }
-        }
         def launcherGenerator = new File(rootDir, "tools/generate-ghostex-launcher-icons.swift")
         def launcherGeneratorText = launcherGenerator.isFile() ? launcherGenerator.getText("UTF-8") : ""
-        if (!launcherGeneratorText.contains("Legacy launcher PNGs are still used below Android 8") ||
-            !launcherGeneratorText.contains("static let bg = color(0x181818)") ||
-            !launcherGeneratorText.contains("static let accent = color(0x7dd3fc)") ||
-            !launcherGeneratorText.contains("static let working = color(0xf59e0b)")) {
-            violations.add("tools/generate-ghostex-launcher-icons.swift must generate neutral Ghostex legacy launcher PNGs")
+        if (!launcherGeneratorText.contains("icon_512x512@2x.png") ||
+            !launcherGeneratorText.contains("resizedIcon(from: macIcon") ||
+            !launcherGeneratorText.contains("fastlane/metadata/android/en-US/images")) {
+            violations.add("tools/generate-ghostex-launcher-icons.swift must generate launcher PNGs from the macOS AppIcon source")
         }
         [
             ["mipmap-mdpi", 48],
@@ -1498,11 +1509,10 @@ task verifyGhostexReleaseVersionIdentity() {
                 def icon = new File(projectDir, "src/main/res/${density[0]}/${name}")
                 validateImage(icon, density[1] as int, density[1] as int,
                     "${density[0]}/${name}", violations)
-                validateApproxImagePixel(icon, ((density[1] as int) / 2) as int, 2,
-                    0x18, 0x18, 0x18, 10,
-                    "${density[0]}/${name} neutral launcher background", violations)
             }
         }
+        validateImage(new File(rootDir, "fastlane/metadata/android/en-US/images/icon.png"), 512, 512,
+            "fastlane icon.png", violations)
         if (!violations.isEmpty()) {
             throw new GradleException("Ghostex Android launcher identity is not release-ready: " + violations.join(", "))
         }
@@ -1814,11 +1824,11 @@ task verifyGhostexReleaseE2EHarness() {
         uninstall app/test packages first so an existing release or Termux
         install cannot block debug proof with signature mismatch.
 
-        CDXC:AndroidReleaseE2E 2026-05-17-19:34:
-        The disposable-device uninstall also removes phone-side packages. Keep
-        the live harness waiting for the fresh Termux bootstrap and installing
-        OpenSSH/sshpass before instrumentation, otherwise final proof depends on
-        impossible preinstalled tools in deleted app data.
+        CDXC:AndroidReleaseE2E 2026-05-20-12:48:
+        The live harness must prove the Play-compliant app-owned SSHJ transport,
+        not the removed phone-side OpenSSH/sshpass package flow. Gate the script
+        for direct instrumentation after launch and for explicit copy stating
+        that no phone-side OpenSSH dependency remains.
         */
         def violations = []
         def runner = new File(rootDir, "tools/ghostex-android-device-e2e.sh")
@@ -1828,8 +1838,20 @@ task verifyGhostexReleaseE2EHarness() {
             violations.add("missing tools/ghostex-android-device-e2e.sh with target-machine arguments")
         } else {
             def runnerText = runner.getText("UTF-8")
-            ["ghostex-android-adb.sh", "resolve_ghostex_android_adb", "GHOSTEX_ANDROID_ADB", "ghostex_android_package_name", "run-as \"$runtime_package\"", "cat > files/ghostex-e2e/password", "files/ghostex-e2e/password", "cleanup_password_files", "GHOSTEX_ANDROID_CONFIRM_CLEAR_DATA", "require_ghostex_android_data_clear_confirmation", "adb_cmd uninstall \"$runtime_package\"", "adb_cmd uninstall \"$test_package\"", "wait_for_termux_bootstrap", "files/usr/bin/pkg", "install_phone_ssh_tools", "pkg install -y openssh sshpass", "command -v ssh && command -v sshpass"].each { required ->
+            /*
+            CDXC:AndroidReleaseE2E 2026-05-20-12:42:
+            These verifier snippets are shell literals from the device E2E
+            runner. Use single-quoted Groovy strings for shell variables so
+            production release gates inspect the harness instead of resolving
+            nonexistent Gradle properties.
+            */
+            ["ghostex-android-adb.sh", "resolve_ghostex_android_adb", "GHOSTEX_ANDROID_ADB", "ghostex_android_package_name", 'run-as "$runtime_package"', "cat > files/ghostex-e2e/password", "files/ghostex-e2e/password", "cleanup_password_files", "GHOSTEX_ANDROID_CONFIRM_CLEAR_DATA", "require_ghostex_android_data_clear_confirmation", 'adb_cmd uninstall "$runtime_package"', 'adb_cmd uninstall "$test_package"', "The app-owned SSHJ transport can authenticate", "does not depend on phone-side OpenSSH/sshpass packages", ":app:connectedDebugAndroidTest"].each { required ->
                 if (!runnerText.contains(required)) violations.add("ghostex-android-device-e2e.sh missing adb discovery hook " + required)
+            }
+            if (runnerText.contains("pkg install -y openssh sshpass") ||
+                runnerText.contains("install_phone_ssh_tools") ||
+                runnerText.contains("wait_for_termux_bootstrap")) {
+                violations.add("ghostex-android-device-e2e.sh must not reinstall phone-side OpenSSH/sshpass after SSHJ became the release transport")
             }
             if (runnerText.contains('ghostexPassword=$GHOSTEX_ANDROID_PASSWORD') ||
                 runnerText.contains("InstrumentationRunnerArguments.ghostexPassword")) {
@@ -1953,8 +1975,14 @@ task verifyGhostexReleaseUiSmokeHarness() {
                 "./gradlew :app:assembleRelease >&2",
                 "./gradlew :app:assembleDebug >&2",
                 "ghostex_android_package_name",
-                "adb_cmd uninstall \"$runtime_package\"",
-                "adb_cmd uninstall \"$test_package\"",
+                /*
+                CDXC:AndroidReleaseE2E 2026-05-20-13:01:
+                UI-smoke verifier snippets include shell variables from the
+                harness. Keep them single-quoted so Gradle checks the script
+                text instead of resolving nonexistent build properties.
+                */
+                'adb_cmd uninstall "$runtime_package"',
+                'adb_cmd uninstall "$test_package"',
                 "fill_edit_text 1 \"Smoke_Mac\"",
                 "fill_edit_text 2 \"127.0.0.1\"",
                 "fill_edit_text 3 \"ghostex\"",
@@ -2466,6 +2494,15 @@ task verifyGhostexReleaseCiSurface() {
 def findManifestTagForComponent(String text, String componentName) {
     def candidates = [componentName]
     if (componentName.startsWith(".")) {
+        /*
+        CDXC:AndroidReleaseSurface 2026-05-20-12:54:
+        Release manifests keep upstream Java component names under the
+        `com.termux` namespace while the installable runtime package is
+        `io.ghostex`. Check both identities so entry-point gates verify the
+        locked-down manifest instead of treating namespace-preserved components
+        as missing.
+        */
+        candidates.add("com.termux" + componentName)
         candidates.add(project.ext.ghostexRuntimePackageName + componentName)
     }
     for (String candidate : candidates) {

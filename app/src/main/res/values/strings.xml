@@ -2,7 +2,7 @@
 
 <!DOCTYPE resources [
     <!ENTITY TERMUX_PACKAGE_NAME "io.ghostex">
-    <!ENTITY TERMUX_APP_NAME "Ghostex Android">
+    <!ENTITY TERMUX_APP_NAME "Ghostex">
     <!ENTITY TERMUX_API_APP_NAME "Termux:API">
     <!ENTITY TERMUX_BOOT_APP_NAME "Termux:Boot">
     <!ENTITY TERMUX_FLOAT_APP_NAME "Termux:Float">
@@ -13,9 +13,10 @@
 
 <resources>
 
-    <!-- CDXC:AndroidBranding 2026-05-17-10:13: The Android app should present as Ghostex Android even while it reuses Termux internals for the terminal surface and process model. -->
+    <!-- CDXC:AndroidBranding 2026-05-17-10:13: The Android app should present as Ghostex even while it reuses Termux internals for the terminal surface and process model. -->
     <!-- CDXC:AndroidSideBySideInstall 2026-05-17-23:39: Resource text and package-sensitive permission labels should use the Ghostex package id so Android can install Ghostex Android beside upstream Termux. -->
     <!-- CDXC:AndroidBranding 2026-05-18-06:41: Static resource entities must use `io.ghostex` so package-visible Android surfaces spell Ghostex correctly while preserving the same byte length as `com.termux`. -->
+    <!-- CDXC:AndroidBranding 2026-05-20-19:17: The app drawer label should be the short product name `Ghostex`; longer `Ghostex Android` wording remains for docs and explanatory copy when needed. -->
 
     <string name="application_name">&TERMUX_APP_NAME;</string>
     <string name="shared_user_label">&TERMUX_APP_NAME; user</string>

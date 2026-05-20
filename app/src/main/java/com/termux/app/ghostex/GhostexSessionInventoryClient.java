@@ -107,20 +107,27 @@ public final class GhostexSessionInventoryClient {
         public final boolean ok;
         public final String errorMessage;
         public final List<GhostexRemoteSession> sessions;
+        @Nullable public final String createdSessionId;
 
         private Result(boolean ok, @Nullable String errorMessage,
-                       @NonNull List<GhostexRemoteSession> sessions) {
+                       @NonNull List<GhostexRemoteSession> sessions,
+                       @Nullable String createdSessionId) {
             this.ok = ok;
             this.errorMessage = errorMessage;
             this.sessions = sessions;
+            this.createdSessionId = createdSessionId;
         }
 
         public static Result success(@NonNull List<GhostexRemoteSession> sessions) {
-            return new Result(true, null, sessions);
+            return new Result(true, null, sessions, null);
+        }
+
+        public static Result createSuccess(@Nullable String createdSessionId) {
+            return new Result(true, null, new ArrayList<>(), createdSessionId);
         }
 
         public static Result failure(@NonNull String errorMessage) {
-            return new Result(false, errorMessage, new ArrayList<>());
+            return new Result(false, errorMessage, new ArrayList<>(), null);
         }
     }
 
@@ -188,9 +195,29 @@ public final class GhostexSessionInventoryClient {
             if (commandResult.exitCode != 0) {
                 return Result.failure(summarizeFailure(commandResult.output, hasPassword(password)));
             }
-            return Result.success(new ArrayList<>());
+            return Result.createSuccess(parseCreatedSessionId(commandResult.output));
         } catch (Exception error) {
             return Result.failure(error.getMessage() == null ? "Could not create a Ghostex session." : error.getMessage());
+        }
+    }
+
+    /*
+    CDXC:AndroidRemoteSessions 2026-05-19-11:20:
+    `ghostex create-session --json` returns a compact created-session summary.
+    Parse that stable session id so Android can refresh inventory and attach the
+    new terminal immediately instead of leaving the drawer open for manual attach.
+    */
+    @Nullable
+    static String parseCreatedSessionId(@NonNull String output) {
+        try {
+            JSONObject root = new JSONObject(extractFirstJsonObject(output));
+            if (!root.optBoolean("ok", false)) return null;
+            JSONObject session = root.optJSONObject("session");
+            if (session == null) return null;
+            String sessionId = session.optString("sessionId", "").trim();
+            return sessionId.isEmpty() ? null : sessionId;
+        } catch (Exception ignored) {
+            return null;
         }
     }
 

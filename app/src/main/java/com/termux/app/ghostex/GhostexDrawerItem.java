@@ -90,6 +90,11 @@ public final class GhostexDrawerItem {
     Project headers are tappable disclosure rows on Android. Keep collapse state
     keyed by the same project key used for project actions so refreshes preserve
     the user's expanded/collapsed view without changing the Mac-side ordering.
+
+    CDXC:AndroidRemoteSessions 2026-05-19-11:20:
+    After Android creates a session in a project, resolve the created row by
+    matching the same project key used for project headers instead of guessing
+    from unrelated sessions in the inventory payload.
     */
     public static GhostexDrawerItem stateCard(@NonNull String title, @NonNull String body,
                                               @NonNull String actionHint) {
@@ -147,6 +152,14 @@ public final class GhostexDrawerItem {
             }
         }
         return items;
+    }
+
+    static String projectKeyForSession(@NonNull GhostexRemoteSession session) {
+        return groupKey(session);
+    }
+
+    boolean containsSession(@NonNull GhostexRemoteSession session) {
+        return projectKey.equals(projectKeyForSession(session));
     }
 
     private static String groupKey(@NonNull GhostexRemoteSession session) {

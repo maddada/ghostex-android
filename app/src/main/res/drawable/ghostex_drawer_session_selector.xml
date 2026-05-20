@@ -1,21 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- CDXC:AndroidSidebar 2026-05-19-10:45: Session rows draw their own card backgrounds in GhostexRemoteSessionAdapter. Keep the ListView selector transparent so singleChoice selection does not paint stale blue-slate fills over project headers. -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:state_pressed="true">
-        <shape android:shape="rectangle">
-            <solid android:color="#182231" />
-            <corners android:radius="8dp" />
-        </shape>
-    </item>
-    <item android:state_selected="true">
-        <shape android:shape="rectangle">
-            <solid android:color="#223047" />
-            <corners android:radius="8dp" />
-        </shape>
-    </item>
-    <item>
-        <shape android:shape="rectangle">
-            <solid android:color="#101720" />
-            <corners android:radius="8dp" />
-        </shape>
-    </item>
+    <item android:drawable="@android:color/transparent" />
 </selector>

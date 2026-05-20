@@ -33,6 +33,11 @@ public final class GhostexSessionCardFormatter {
     Last Active is release-critical sidebar metadata. Parse standard ISO
     timestamps with either UTC `Z` or explicit offsets so Android keeps recency
     sorting and labels even if the Mac bridge emits local-offset ISO strings.
+
+    CDXC:AndroidSidebar 2026-05-19-10:15:
+    Drawer session rows no longer render buildMeta output. Keep this formatter
+    for sidebar sort order and the long-press Details sheet instead of duplicating
+    recency formatting in the adapter.
     */
     public static String buildMeta(@NonNull GhostexRemoteSession session, long nowMs) {
         StringBuilder builder = new StringBuilder();

@@ -20,6 +20,7 @@ public final class GhostexRemoteSession {
     public final String provider;
     public final String providerSessionName;
     public final String agent;
+    public final String agentIcon;
     public final String lastInteractionAt;
     public final boolean isFocused;
     public final boolean isSleeping;
@@ -58,6 +59,11 @@ public final class GhostexRemoteSession {
     when project metadata is sparse. Use those as fallback Android project
     metadata so the drawer still mirrors the macOS sidebar grouping instead of
     demoting valid grouped rows to per-session Ungrouped buckets.
+
+    CDXC:AndroidSidebar 2026-05-19-11:05:
+    The Mac inventory can expose `agentIcon` directly. Keep it alongside the
+    human-readable agent label so Android session cards can render the same
+    logo identity as the macOS sidebar without re-deriving icons in the adapter.
     */
     public GhostexRemoteSession(String alias, String sessionId, String projectId, String title,
                                 String projectName, String projectPath, String activity,
@@ -65,7 +71,7 @@ public final class GhostexRemoteSession {
                                 String agent, String lastInteractionAt, boolean isFocused,
                                 boolean isSleeping) {
         this(alias, sessionId, projectId, "", title, projectName, projectPath, activity,
-            status, provider, providerSessionName, agent, lastInteractionAt, isFocused,
+            status, provider, providerSessionName, agent, "", lastInteractionAt, isFocused,
             isSleeping);
     }
 
@@ -74,6 +80,16 @@ public final class GhostexRemoteSession {
                                 String status, String provider, String providerSessionName,
                                 String agent, String lastInteractionAt, boolean isFocused,
                                 boolean isSleeping) {
+        this(alias, sessionId, projectId, groupId, title, projectName, projectPath, activity,
+            status, provider, providerSessionName, agent, "", lastInteractionAt, isFocused,
+            isSleeping);
+    }
+
+    public GhostexRemoteSession(String alias, String sessionId, String projectId, String groupId,
+                                String title, String projectName, String projectPath, String activity,
+                                String status, String provider, String providerSessionName,
+                                String agent, String agentIcon, String lastInteractionAt,
+                                boolean isFocused, boolean isSleeping) {
         this.alias = alias;
         this.sessionId = sessionId;
         this.projectId = projectId;
@@ -86,6 +102,7 @@ public final class GhostexRemoteSession {
         this.provider = provider;
         this.providerSessionName = providerSessionName;
         this.agent = agent;
+        this.agentIcon = agentIcon;
         this.lastInteractionAt = lastInteractionAt;
         this.isFocused = isFocused;
         this.isSleeping = isSleeping;
@@ -116,6 +133,7 @@ public final class GhostexRemoteSession {
             provider,
             providerSessionName,
             trimmedJsonValue(json, "agent"),
+            trimmedJsonValue(json, "agentIcon"),
             trimmedJsonValue(json, "lastInteractionAt"),
             json.optBoolean("isFocused", false),
             json.optBoolean("isSleeping", "sleeping".equals(status) || "sleep".equals(status))

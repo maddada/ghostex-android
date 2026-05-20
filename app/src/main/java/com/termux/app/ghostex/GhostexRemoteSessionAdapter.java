@@ -1,7 +1,6 @@
 package com.termux.app.ghostex;
 
 import android.content.Context;
-import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.text.TextUtils;
@@ -119,6 +118,20 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
     Tapping the project header toggles expanded/collapsed state. Inline plus and
     vertical-more buttons remain separate click targets, so project disclosure
     does not steal create-session or overflow actions.
+
+    CDXC:AndroidSidebar 2026-05-19-10:15:
+    Android session cards stay single-line title rows without the alias badge,
+    metadata line, or status pill so the drawer matches the simplified macOS
+    sidebar density on phones.
+
+    CDXC:AndroidSidebar 2026-05-19-10:15:
+    Project headers should not show a session-count pill. Keep project title plus
+    create and overflow actions only.
+
+    CDXC:AndroidSidebar 2026-05-19-11:05:
+    Session cards show the agent logo on the left, matching macOS sidebar session
+    buttons. Use the shared Ghostex agentIcon field when present and fall back to
+    the terminal glyph for plain terminal sessions.
     */
     public GhostexRemoteSessionAdapter(@NonNull Context context,
                                        @NonNull List<GhostexDrawerItem> items) {
@@ -224,12 +237,9 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
             ? (LinearLayout) convertView
             : createProjectHeader(parent);
         TextView title = (TextView) row.findViewWithTag("projectTitle");
-        TextView count = (TextView) row.findViewWithTag("projectCount");
         TextView create = (TextView) row.findViewWithTag("projectCreate");
         ImageButton actions = (ImageButton) row.findViewWithTag("projectActions");
         title.setText(item.projectTitle);
-        String summary = buildProjectSummary(item);
-        count.setText(summary);
         row.setOnClickListener(view -> {
             if (projectToggleListener != null) {
                 projectToggleListener.onToggleProject(item);
@@ -247,7 +257,7 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
                 projectActionsListener.onOpenProjectActions(item);
             }
         });
-        row.setContentDescription(GhostexAccessibilityCopy.join(item.projectTitle, summary,
+        row.setContentDescription(GhostexAccessibilityCopy.join(item.projectTitle,
             item.collapsed ? "Tap to expand. Use plus to create a session. Use more for project actions."
                 : "Tap to collapse. Use plus to create a session. Use more for project actions."));
         return row;
@@ -260,23 +270,15 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
             : createSessionRow(parent);
         GhostexRemoteSession session = item == null ? null : item.session;
         TextView title = (TextView) row.findViewWithTag("title");
-        TextView meta = (TextView) row.findViewWithTag("meta");
-        TextView badge = (TextView) row.findViewWithTag("badge");
-        TextView statusPill = (TextView) row.findViewWithTag("statusPill");
+        ImageView agentIcon = (ImageView) row.findViewWithTag("agentIcon");
         if (session == null) return row;
 
         title.setText(session.title.isEmpty() ? "Ghostex Session" : session.title);
-        meta.setText(GhostexSessionCardFormatter.buildMeta(session, System.currentTimeMillis()));
-        badge.setText(session.alias);
-        int statusColor = statusColor(session);
-        badge.setBackground(badgeBackground(parent.getContext(), statusColor));
-        String status = statusLabel(session);
-        statusPill.setText(status);
-        statusPill.setTextColor(statusColor);
+        agentIcon.setImageResource(GhostexSessionAgentIcon.drawableResForSession(session));
+        agentIcon.setColorFilter(GhostexSessionAgentIcon.tintColorForSession(session));
         row.setBackground(sessionBackground(parent.getContext(),
             isActiveSession(currentMachineId, activeSessionKey, session)));
         row.setContentDescription(GhostexAccessibilityCopy.join(title.getText().toString(),
-            "Session " + session.alias, meta.getText().toString(), status,
             "Tap to attach. Long press for actions."));
         return row;
     }
@@ -318,16 +320,6 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         title.setGravity(Gravity.CENTER_VERTICAL);
         title.setMinHeight(dp(context, 32));
         row.addView(title, new LinearLayout.LayoutParams(0, dp(context, 32), 1));
-
-        TextView count = new TextView(context);
-        count.setTag("projectCount");
-        count.setTextColor(GhostexPalette.MUTED);
-        count.setTextSize(13);
-        count.setGravity(Gravity.CENTER);
-        count.setMinHeight(dp(context, 32));
-        count.setPadding(dp(context, 10), 0, dp(context, 10), 0);
-        count.setBackground(pillBackground(context));
-        row.addView(count, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(context, 32)));
 
         TextView create = new TextView(context);
         create.setTag("projectCreate");
@@ -414,13 +406,6 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         return drawable;
     }
 
-    private GradientDrawable badgeBackground(@NonNull Context context, int color) {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(color);
-        drawable.setCornerRadius(dp(context, 8));
-        return drawable;
-    }
-
     private GradientDrawable pillBackground(@NonNull Context context) {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setColor(GhostexPalette.BACKGROUND);
@@ -436,20 +421,16 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(context, 10), dp(context, 9), dp(context, 10), dp(context, 9));
-        row.setMinimumHeight(dp(context, 68));
+        row.setMinimumHeight(dp(context, 44));
 
-        TextView badge = new TextView(context);
-        badge.setTag("badge");
-        badge.setTextColor(Color.WHITE);
-        badge.setTypeface(Typeface.DEFAULT_BOLD);
-        badge.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(dp(context, 34), dp(context, 34));
-        badgeParams.setMarginEnd(dp(context, 10));
-        row.addView(badge, badgeParams);
-
-        LinearLayout textStack = new LinearLayout(context);
-        textStack.setOrientation(LinearLayout.VERTICAL);
-        textStack.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView agentIcon = new ImageView(context);
+        agentIcon.setTag("agentIcon");
+        agentIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        agentIcon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams iconParams =
+            new LinearLayout.LayoutParams(dp(context, 18), dp(context, 18));
+        iconParams.setMarginEnd(dp(context, 10));
+        row.addView(agentIcon, iconParams);
 
         TextView title = new TextView(context);
         title.setTag("title");
@@ -458,42 +439,8 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.END);
-        textStack.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        LinearLayout metaRow = new LinearLayout(context);
-        metaRow.setOrientation(LinearLayout.HORIZONTAL);
-        metaRow.setGravity(Gravity.CENTER_VERTICAL);
-
-        TextView meta = new TextView(context);
-        meta.setTag("meta");
-        meta.setTextColor(GhostexPalette.MUTED);
-        meta.setTextSize(12);
-        meta.setSingleLine(true);
-        meta.setEllipsize(TextUtils.TruncateAt.END);
-        metaRow.addView(meta, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-
-        TextView statusPill = new TextView(context);
-        statusPill.setTag("statusPill");
-        statusPill.setTextSize(11);
-        statusPill.setGravity(Gravity.CENTER);
-        statusPill.setPadding(dp(context, 6), 0, 0, 0);
-        metaRow.addView(statusPill, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        textStack.addView(metaRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        row.addView(textStack, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        row.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         return row;
-    }
-
-    private String buildProjectSummary(@NonNull GhostexDrawerItem item) {
-        if (item.attentionCount > 0) return item.attentionCount + " attention · " + item.sessionCount + " sessions";
-        if (item.workingCount > 0) return item.workingCount + " working · " + item.sessionCount + " sessions";
-        if (item.sleepingCount == item.sessionCount) return item.sessionCount + " sleeping";
-        return item.sessionCount == 1 ? "1 session" : item.sessionCount + " sessions";
-    }
-
-    private String statusLabel(@NonNull GhostexRemoteSession session) {
-        if (session.isFocused) return "active";
-        return session.displayStatus();
     }
 
     static int statusColor(@NonNull GhostexRemoteSession session) {

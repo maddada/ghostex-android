@@ -10,14 +10,21 @@ future upstream syncs remain understandable.
 
 Ghostex Android is a Termux-based Android app for connecting to persistent Ghostex sessions already running on your Mac.
 
-The app reaches the Mac over Tailscale SSH, asks the Ghostex CLI for the live sidebar session list, and attaches the Android terminal surface to selected ZMX-backed sessions. Local Termux terminal management is intentionally hidden behind the Ghostex drawer.
+<!--
+CDXC:AndroidSshTransport 2026-05-20-12:59:
+Production Android builds use the app-owned SSHJ transport for reconnect,
+session inventory, actions, attach, and uploads. Keep release docs explicit so
+publishing does not regress to the removed phone-side OpenSSH/sshpass setup.
+-->
+
+The app reaches the Mac over Tailscale SSH, uses the app-owned SSHJ transport, asks the Ghostex CLI for the live sidebar session list, and attaches the Android terminal surface to selected ZMX-backed sessions. Local Termux terminal management is intentionally hidden behind the Ghostex drawer.
 
 ## Current Scope
 
 - Connect to one or more saved SSH machines from the Ghostex drawer.
 - Automatically reconnect to the last selected machine when the app reopens.
 - Open Tailscale from onboarding, setup, and recovery paths.
-- Install/check phone-side OpenSSH and `sshpass` from the setup flow.
+- Use built-in SSHJ for phone-side SSH instead of installing OpenSSH or `sshpass`.
 - List only ZMX-backed Ghostex sessions for the first Android release.
 - Keep the last seven opened remote sessions warm for faster switching.
 - Use long-press action sheets for sidebar actions that are hover controls on macOS.
@@ -35,7 +42,7 @@ The app reaches the Mac over Tailscale SSH, asks the Ghostex CLI for the live si
    ```
 
 6. Install and sign in to Tailscale on the Android device.
-7. Open Ghostex Android, run Setup if phone SSH tools are missing, then add the Mac as a saved machine.
+7. Open Ghostex Android, then add the Mac as a saved machine.
 
 ## Release Verification
 

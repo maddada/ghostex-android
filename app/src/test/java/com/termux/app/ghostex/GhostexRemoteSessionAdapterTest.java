@@ -28,8 +28,11 @@ public final class GhostexRemoteSessionAdapterTest {
     that explain the target and available tap, overflow, or long-press action.
 
     CDXC:AndroidSidebar 2026-05-18-02:31:
-    Project headers expose a plus button immediately after the session-count
-    pill so Android can create a Mac-side Ghostex terminal in that group.
+    Project headers expose a plus button beside the project title so Android
+    can create a Mac-side Ghostex terminal in that group.
+
+    CDXC:AndroidSidebar 2026-05-19-10:15:
+    Session rows are single-line title cards without alias badges or metadata.
 
     CDXC:AndroidSidebar 2026-05-18-05:18:
     Project headers expose a three-dot action button to the right of the plus
@@ -41,9 +44,9 @@ public final class GhostexRemoteSessionAdapterTest {
     a literal `...` label, so tests pin the control type and drawable presence.
 
     CDXC:AndroidSidebar 2026-05-18-16:13:
-    Project headers are disclosure rows. The title, session count, and plus
-    controls must share one exact 32dp height while the vertical-dots icon is
-    visually smaller inside the same button height.
+    Project headers are disclosure rows. The title and plus controls must share
+    one exact 32dp height while the vertical-dots icon is visually smaller
+    inside the same button height.
     */
     @Test
     public void stateCardHasRecoveryContentDescription() {
@@ -65,29 +68,26 @@ public final class GhostexRemoteSessionAdapterTest {
 
         View view = adapter.getView(0, null, new FrameLayout(RuntimeEnvironment.getApplication()));
 
-        Assert.assertEquals("Ghostex. 1 working · 2 sessions. Tap to collapse. Use plus to create a session. Use more for project actions.",
+        Assert.assertEquals("Ghostex. Tap to collapse. Use plus to create a session. Use more for project actions.",
             view.getContentDescription().toString());
     }
 
     @Test
-    public void projectHeaderHasCountCreateAndActionsButtonsInOrder() {
+    public void projectHeaderHasCreateAndActionsButtonsInOrder() {
         GhostexRemoteSessionAdapter adapter = adapterForSessions();
 
         View view = adapter.getView(0, null, new FrameLayout(RuntimeEnvironment.getApplication()));
         TextView create = view.findViewWithTag("projectCreate");
-        TextView count = view.findViewWithTag("projectCount");
         ImageButton actions = view.findViewWithTag("projectActions");
 
+        Assert.assertNull(view.findViewWithTag("projectCount"));
         Assert.assertEquals("+", create.getText().toString());
         Assert.assertNotNull(actions.getDrawable());
         Assert.assertEquals("Create a session in Ghostex", create.getContentDescription().toString());
         Assert.assertEquals("Open project actions for Ghostex", actions.getContentDescription().toString());
         Assert.assertEquals(dp(32), create.getLayoutParams().height);
-        Assert.assertEquals(dp(32), count.getLayoutParams().height);
         Assert.assertEquals(dp(32), actions.getLayoutParams().height);
         Assert.assertEquals(dp(10), actions.getPaddingLeft());
-        Assert.assertTrue(((android.view.ViewGroup) view).indexOfChild(count) <
-            ((android.view.ViewGroup) view).indexOfChild(create));
         Assert.assertTrue(((android.view.ViewGroup) view).indexOfChild(create) <
             ((android.view.ViewGroup) view).indexOfChild(actions));
     }
@@ -157,32 +157,27 @@ public final class GhostexRemoteSessionAdapterTest {
 
         String description = view.getContentDescription().toString();
         Assert.assertTrue(description.contains("Session 1"));
-        Assert.assertTrue(description.contains("Ghostex"));
-        Assert.assertTrue(description.contains("zmx-main"));
-        Assert.assertTrue(description.contains("working"));
+        Assert.assertFalse(description.contains("zmx-main"));
         Assert.assertTrue(description.contains("Tap to attach. Long press for actions."));
     }
 
     /*
     CDXC:AndroidSidebar 2026-05-17-19:42:
-    Release sidebar cards should keep the macOS-inspired rounded card surface
-    and status palette. A flat row fill is a visual regression because Android
-    is meant to feel like the Ghostex sidebar over Termux, not the stock Termux
-    local-session list.
-
-    CDXC:AndroidSidebar 2026-05-17-20:08:
-    The Android session list should keep neutral macOS sidebar chrome with
-    colored status accents. Pin the current orange working state and blue focus
-    accent so the drawer does not drift back into a blue-slate theme.
+    Release sidebar cards should keep the macOS-inspired rounded card surface.
+    A flat row fill is a visual regression because Android is meant to feel like
+    the Ghostex sidebar over Termux, not the stock Termux local-session list.
     */
     @Test
-    public void sessionRowUsesRoundedCardAndMacSidebarStatusPalette() {
+    public void sessionRowUsesRoundedCardWithoutMetadataRow() {
         GhostexRemoteSessionAdapter adapter = adapterForSessions();
         View view = adapter.getView(1, null, new FrameLayout(RuntimeEnvironment.getApplication()));
-        TextView status = view.findViewWithTag("statusPill");
 
         Assert.assertTrue(view.getBackground() instanceof GradientDrawable);
-        Assert.assertEquals(Color.rgb(245, 158, 11), status.getCurrentTextColor());
+        Assert.assertNull(view.findViewWithTag("badge"));
+        Assert.assertNull(view.findViewWithTag("meta"));
+        Assert.assertNull(view.findViewWithTag("statusPill"));
+        Assert.assertNotNull(view.findViewWithTag("title"));
+        Assert.assertNotNull(view.findViewWithTag("agentIcon"));
     }
 
     @Test

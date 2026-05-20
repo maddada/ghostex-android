@@ -19,6 +19,10 @@
 
     <!-- CDXC:AndroidSidebar 2026-05-18-06:51: The sessions sidebar header should read simply as Ghostex, expose a refresh control immediately left of Machines, and keep list-card gaps transparent so #262626 button chrome never appears as divider lines between session cards. -->
 
+    <!-- CDXC:AndroidSidebar 2026-05-19-10:15: The sessions page status line under the Ghostex title should name the connected machine only, without appending total ZMX session counts. -->
+
+    <!-- CDXC:AndroidSidebar 2026-05-19-10:45: Keep choiceMode off and the list selector transparent so project headers never get Android's blue singleChoice fill; active session styling stays in GhostexRemoteSessionAdapter. -->
+
     <!-- CDXC:AndroidSettings 2026-05-18-10:42: Ghostex Android needs a first-class in-drawer Settings page for important Termux terminal options like auto scroll instead of sending users to hidden stock settings. Put the Settings icon between Machines and Exit so the main sidebar header exposes Machines, Settings, then deliberate app exit. -->
 
     <LinearLayout
@@ -136,10 +140,10 @@
             android:layout_weight="1"
             android:background="@android:color/transparent"
             android:cacheColorHint="@android:color/transparent"
-            android:choiceMode="singleChoice"
+            android:choiceMode="none"
             android:divider="@android:color/transparent"
             android:dividerHeight="8dp"
-            android:listSelector="@drawable/ghostex_drawer_session_selector"
+            android:listSelector="@android:color/transparent"
             android:longClickable="true" />
     </LinearLayout>
 
