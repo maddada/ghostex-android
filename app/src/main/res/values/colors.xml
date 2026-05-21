@@ -7,4 +7,6 @@
     <color name="ghostex_sidebar_input">#0E0E0E</color>
     <color name="ghostex_sidebar_button">#262626</color>
     <color name="ghostex_sidebar_primary">#7DD3FC</color>
+    <!-- CDXC:AndroidBranding 2026-05-21-02:36: The Android launcher icon should keep the full macOS Ghostex mark visible, with white padding behind it so Android launcher masks do not make the artwork feel over-zoomed. -->
+    <color name="ghostex_launcher_background">#FFFFFF</color>
 </resources>

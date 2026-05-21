@@ -935,6 +935,11 @@ task verifyGhostexReleaseDrawerSurface() {
         terminal content: keep it round, gray, 20% smaller than the previous
         56dp overlay, and 10% opaque.
 
+        CDXC:AndroidSidebar 2026-05-21-09:06:
+        Bottom terminal FABs now use white icons for refresh, upload, and
+        keyboard. Keep translucency in the shared oval background instead of
+        view alpha so the controls stay quiet without dimming the icon glyphs.
+
         CDXC:AndroidSidebar 2026-05-17-16:12:
         Action sheets carry Android's long-press replacement for macOS hover
         controls. Keep their custom rows accessible by gating the composed
@@ -976,6 +981,11 @@ task verifyGhostexReleaseDrawerSurface() {
         to the sessions list header immediately to the right of the sessions
         count pill. The Machines page keeps its Add control in the bottom
         action row with Retry.
+
+        CDXC:AndroidNavigation 2026-05-20-14:42:
+        Back can arrive through the modern Activity dispatcher or directly
+        through TerminalView key handling. Gate both paths so Ghostex mode never
+        exits on hardware, gesture, or legacy back input.
 
         CDXC:AndroidSidebar 2026-05-18-06:51:
         The sessions header should use the short Ghostex title, expose Refresh
@@ -1081,10 +1091,18 @@ task verifyGhostexReleaseDrawerSurface() {
         def onBackBlock = onBackIndex >= 0 && finishActivityIndex > onBackIndex
             ? activityText.substring(onBackIndex, finishActivityIndex)
             : ""
-        if (!onBackBlock.contains("if (isGhostexDrawerLayoutInstalled())") ||
-            !onBackBlock.contains("getDrawer().openDrawer(Gravity.LEFT);") ||
+        def handleGhostexBackIndex = activityText.indexOf("public boolean handleGhostexBackRequest()")
+        def handleDefaultBackIndex = handleGhostexBackIndex < 0 ? -1 : activityText.indexOf("private void handleDefaultBackRequest()", handleGhostexBackIndex)
+        def handleGhostexBackBlock = handleGhostexBackIndex >= 0 && handleDefaultBackIndex > handleGhostexBackIndex
+            ? activityText.substring(handleGhostexBackIndex, handleDefaultBackIndex)
+            : ""
+        if (!handleGhostexBackBlock.contains("if (!isGhostexDrawerLayoutInstalled()) return false;") ||
+            !activityText.contains("configureBackNavigation();") ||
+            !activityText.contains("getOnBackPressedDispatcher().addCallback") ||
+            !onBackBlock.contains("if (handleGhostexBackRequest()) return;") ||
+            !handleGhostexBackBlock.contains("getDrawer().openDrawer(Gravity.LEFT);") ||
             onBackBlock.contains("GhostexBackNavigationPolicy.shouldExit") ||
-            onBackBlock.contains("finishActivityIfNotFinishing();\n                return;")) {
+            handleGhostexBackBlock.contains("finishActivityIfNotFinishing()")) {
             violations.add(activityFile.name + ": Ghostex back navigation must always open the sidebar and never exit the app")
         }
         def settingsBinderIndex = activityText.indexOf("private void setSettingsButtonView()")
@@ -1122,9 +1140,17 @@ task verifyGhostexReleaseDrawerSurface() {
             }
             if (!keyboardFabTag.contains("android:layout_width=\"45dp\"") ||
                 !keyboardFabTag.contains("android:layout_height=\"45dp\"") ||
-                !keyboardFabTag.contains("android:alpha=\"0.10\"")) {
-                violations.add(activityLayoutFile.name + ": floating keyboard button must remain 45dp and 10% opaque")
+                !keyboardFabTag.contains("android:background=\"@drawable/ghostex_fab_background\"") ||
+                !keyboardFabTag.contains("app:icon=\"@drawable/ic_ghostex_keyboard\"") ||
+                !keyboardFabTag.contains("app:iconTint=\"@android:color/white\"") ||
+                keyboardFabTag.contains("android:alpha=")) {
+                violations.add(activityLayoutFile.name + ": floating keyboard button must remain 45dp with translucent oval background and fully visible white icon")
             }
+        }
+        def ghostexFabBackgroundFile = new File(projectDir, "src/main/res/drawable/ghostex_fab_background.xml")
+        def ghostexFabBackgroundText = ghostexFabBackgroundFile.isFile() ? ghostexFabBackgroundFile.getText("UTF-8") : ""
+        if (!ghostexFabBackgroundText.contains("<solid android:color=\"#663C3C3C\"")) {
+            violations.add(ghostexFabBackgroundFile.name + ": bottom terminal controls must keep translucency in the oval fill instead of view alpha")
         }
         def upstreamDrawerMatcher = activityLayoutText =~ /<LinearLayout\b(?=[^>]*android:id="@\+id\/termux_upstream_drawer_template")[^>]*>/
         if (!upstreamDrawerMatcher.find()) {
@@ -1248,6 +1274,11 @@ task verifyGhostexReleaseDrawerSurface() {
         if (!controllerText.contains("row.setContentDescription(GhostexAccessibilityCopy.join(action.label, action.detail") ||
             !controllerText.contains("Destructive action. Tap to run.")) {
             violations.add(controllerFile.name + ": action-sheet rows must keep composed accessibility descriptions")
+        }
+        def terminalViewClientFile = new File(projectDir, "src/main/java/com/termux/app/terminal/TermuxTerminalViewClient.java")
+        def terminalViewClientText = terminalViewClientFile.getText("UTF-8")
+        if (!terminalViewClientText.contains("keyCode == KeyEvent.KEYCODE_BACK && mActivity.handleGhostexBackRequest()")) {
+            violations.add(terminalViewClientFile.name + ": TerminalView KEYCODE_BACK must route through Ghostex sidebar policy before legacy exit behavior")
         }
         def sessionAdapterFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexRemoteSessionAdapter.java")
         def sessionAdapterText = sessionAdapterFile.getText("UTF-8")

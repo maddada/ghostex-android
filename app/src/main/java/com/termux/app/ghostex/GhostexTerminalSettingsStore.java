@@ -24,6 +24,10 @@ public final class GhostexTerminalSettingsStore {
 
     private static final String GHOSTEX_PREFS_NAME = "ghostex_terminal_settings";
     private static final String KEY_AUTO_SCROLL_ENABLED = "auto_scroll_enabled";
+    private static final String KEY_DONE_NOTIFICATION_SOUND_ENABLED = "done_notification_sound_enabled";
+    private static final String KEY_REFRESH_BUTTON_VISIBLE = "refresh_button_visible";
+    private static final String KEY_FILE_UPLOAD_BUTTON_VISIBLE = "file_upload_button_visible";
+    private static final String KEY_KEYBOARD_BUTTON_VISIBLE = "keyboard_button_visible";
 
     private final Context context;
     private final SharedPreferences ghostexPreferences;
@@ -48,6 +52,46 @@ public final class GhostexTerminalSettingsStore {
 
     public void setAutoScrollEnabled(boolean enabled) {
         ghostexPreferences.edit().putBoolean(KEY_AUTO_SCROLL_ENABLED, enabled).apply();
+    }
+
+    public boolean isDoneNotificationSoundEnabled() {
+        /*
+        CDXC:AndroidNotifications 2026-05-21-08:52:
+        Users should be able to choose whether Android plays an audible cue when a remote session enters Done/attention. Default to enabled so the new Done notification behavior is active unless the user opts out in Settings.
+        */
+        return ghostexPreferences.getBoolean(KEY_DONE_NOTIFICATION_SOUND_ENABLED, true);
+    }
+
+    public void setDoneNotificationSoundEnabled(boolean enabled) {
+        ghostexPreferences.edit().putBoolean(KEY_DONE_NOTIFICATION_SOUND_ENABLED, enabled).apply();
+    }
+
+    public boolean isRefreshButtonVisible() {
+        /*
+        CDXC:AndroidTerminalControls 2026-05-21-09:27:
+        The bottom terminal refresh, upload, and keyboard controls should be individually hideable from Settings while remaining enabled by default for existing mobile workflows.
+        */
+        return ghostexPreferences.getBoolean(KEY_REFRESH_BUTTON_VISIBLE, true);
+    }
+
+    public void setRefreshButtonVisible(boolean visible) {
+        ghostexPreferences.edit().putBoolean(KEY_REFRESH_BUTTON_VISIBLE, visible).apply();
+    }
+
+    public boolean isFileUploadButtonVisible() {
+        return ghostexPreferences.getBoolean(KEY_FILE_UPLOAD_BUTTON_VISIBLE, true);
+    }
+
+    public void setFileUploadButtonVisible(boolean visible) {
+        ghostexPreferences.edit().putBoolean(KEY_FILE_UPLOAD_BUTTON_VISIBLE, visible).apply();
+    }
+
+    public boolean isKeyboardButtonVisible() {
+        return ghostexPreferences.getBoolean(KEY_KEYBOARD_BUTTON_VISIBLE, true);
+    }
+
+    public void setKeyboardButtonVisible(boolean visible) {
+        ghostexPreferences.edit().putBoolean(KEY_KEYBOARD_BUTTON_VISIBLE, visible).apply();
     }
 
     public boolean isTerminalToolbarVisible() {

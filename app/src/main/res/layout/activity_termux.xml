@@ -45,16 +45,22 @@
                     android:layout_gravity="bottom|end"
                     android:layout_marginEnd="132dp"
                     android:layout_marginBottom="18dp"
-                    android:alpha="0.10"
                     android:background="@drawable/ghostex_fab_background"
                     android:contentDescription="@string/action_refresh_terminal"
                     android:minWidth="0dp"
                     android:minHeight="0dp"
-                    android:text="@string/ghostex_terminal_refresh_fab_text"
+                    android:paddingStart="0dp"
+                    android:paddingTop="0dp"
+                    android:paddingEnd="0dp"
+                    android:paddingBottom="0dp"
+                    android:text=""
                     android:textAllCaps="false"
-                    android:textColor="#FFFFFF"
-                    android:textSize="14sp"
-                    app:backgroundTint="@null" />
+                    app:backgroundTint="@null"
+                    app:icon="@drawable/ic_ghostex_refresh"
+                    app:iconGravity="textStart"
+                    app:iconPadding="0dp"
+                    app:iconSize="24dp"
+                    app:iconTint="@android:color/white" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/ghostex_file_attach_fab"
@@ -63,16 +69,22 @@
                     android:layout_gravity="bottom|end"
                     android:layout_marginEnd="75dp"
                     android:layout_marginBottom="18dp"
-                    android:alpha="0.10"
                     android:background="@drawable/ghostex_fab_background"
                     android:contentDescription="@string/action_attach_file"
                     android:minWidth="0dp"
                     android:minHeight="0dp"
-                    android:text="@string/ghostex_file_attach_fab_text"
+                    android:paddingStart="0dp"
+                    android:paddingTop="0dp"
+                    android:paddingEnd="0dp"
+                    android:paddingBottom="0dp"
+                    android:text=""
                     android:textAllCaps="false"
-                    android:textColor="#FFFFFF"
-                    android:textSize="14sp"
-                    app:backgroundTint="@null" />
+                    app:backgroundTint="@null"
+                    app:icon="@drawable/ic_ghostex_upload"
+                    app:iconGravity="textStart"
+                    app:iconPadding="0dp"
+                    app:iconSize="24dp"
+                    app:iconTint="@android:color/white" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/ghostex_keyboard_fab"
@@ -81,16 +93,22 @@
                     android:layout_gravity="bottom|end"
                     android:layout_marginEnd="18dp"
                     android:layout_marginBottom="18dp"
-                    android:alpha="0.10"
                     android:background="@drawable/ghostex_fab_background"
                     android:contentDescription="@string/action_toggle_soft_keyboard"
                     android:minWidth="0dp"
                     android:minHeight="0dp"
-                    android:text="@string/ghostex_keyboard_fab_text"
+                    android:paddingStart="0dp"
+                    android:paddingTop="0dp"
+                    android:paddingEnd="0dp"
+                    android:paddingBottom="0dp"
+                    android:text=""
                     android:textAllCaps="false"
-                    android:textColor="#FFFFFF"
-                    android:textSize="14sp"
-                    app:backgroundTint="@null" />
+                    app:backgroundTint="@null"
+                    app:icon="@drawable/ic_ghostex_keyboard"
+                    app:iconGravity="textStart"
+                    app:iconPadding="0dp"
+                    app:iconSize="24dp"
+                    app:iconTint="@android:color/white" />
             </FrameLayout>
 
             <include layout="@layout/view_ghostex_drawer" />

@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- CDXC:AndroidNotifications 2026-05-21-23:52: Collapsed notification shade content should show only the two latest/highest-priority session rows. Do not repeat the Ghostex app header or right-side count numbers inside the custom view; Android owns the app label and the single prioritized notification number. CDXC:AndroidNotifications 2026-05-21-23:59: Session titles and status dots should sit on the platform notification surface without a Ghostex-owned row/root background behind them. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/notification_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="12dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="12dp"
+    android:paddingBottom="8dp">
+
+    <LinearLayout
+        android:id="@+id/notification_row_1"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingTop="0dp">
+
+        <TextView
+            android:id="@+id/notification_row_1_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:singleLine="true"
+            android:textColor="@color/ghostex_sidebar_foreground"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/notification_row_1_dot"
+            android:layout_width="18dp"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:text="&#9679;"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/notification_row_2"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingTop="6dp">
+
+        <TextView
+            android:id="@+id/notification_row_2_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:singleLine="true"
+            android:textColor="@color/ghostex_sidebar_foreground"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/notification_row_2_dot"
+            android:layout_width="18dp"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:text="&#9679;"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+</LinearLayout>

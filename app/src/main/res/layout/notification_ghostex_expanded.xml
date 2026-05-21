@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- CDXC:AndroidNotifications 2026-05-21-23:52: Expanded notification shade rows are session targets, not passive text; keep done rows first, in-progress rows second, show project names by default, and keep the status dot right-aligned without a repeated Ghostex header or count cluster. CDXC:AndroidNotifications 2026-05-21-23:59: Session titles, project names, and status dots should sit on the platform notification surface without a Ghostex-owned row/root background behind them. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/notification_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="12dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="12dp"
+    android:paddingBottom="8dp">
+
+    <LinearLayout
+        android:id="@+id/notification_row_1"
+        style="@style/GhostexNotificationRow">
+
+        <LinearLayout style="@style/GhostexNotificationTextStack">
+            <TextView
+                android:id="@+id/notification_row_1_title"
+                style="@style/GhostexNotificationTitle" />
+            <TextView
+                android:id="@+id/notification_row_1_project"
+                style="@style/GhostexNotificationProject" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/notification_row_1_dot"
+            style="@style/GhostexNotificationDot" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/notification_row_2"
+        style="@style/GhostexNotificationRow">
+
+        <LinearLayout style="@style/GhostexNotificationTextStack">
+            <TextView
+                android:id="@+id/notification_row_2_title"
+                style="@style/GhostexNotificationTitle" />
+            <TextView
+                android:id="@+id/notification_row_2_project"
+                style="@style/GhostexNotificationProject" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/notification_row_2_dot"
+            style="@style/GhostexNotificationDot" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/notification_row_3"
+        style="@style/GhostexNotificationRow">
+
+        <LinearLayout style="@style/GhostexNotificationTextStack">
+            <TextView
+                android:id="@+id/notification_row_3_title"
+                style="@style/GhostexNotificationTitle" />
+            <TextView
+                android:id="@+id/notification_row_3_project"
+                style="@style/GhostexNotificationProject" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/notification_row_3_dot"
+            style="@style/GhostexNotificationDot" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/notification_row_4"
+        style="@style/GhostexNotificationRow">
+
+        <LinearLayout style="@style/GhostexNotificationTextStack">
+            <TextView
+                android:id="@+id/notification_row_4_title"
+                style="@style/GhostexNotificationTitle" />
+            <TextView
+                android:id="@+id/notification_row_4_project"
+                style="@style/GhostexNotificationProject" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/notification_row_4_dot"
+            style="@style/GhostexNotificationDot" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/notification_row_5"
+        style="@style/GhostexNotificationRow">
+
+        <LinearLayout style="@style/GhostexNotificationTextStack">
+            <TextView
+                android:id="@+id/notification_row_5_title"
+                style="@style/GhostexNotificationTitle" />
+            <TextView
+                android:id="@+id/notification_row_5_project"
+                style="@style/GhostexNotificationProject" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/notification_row_5_dot"
+            style="@style/GhostexNotificationDot" />
+    </LinearLayout>
+
+</LinearLayout>

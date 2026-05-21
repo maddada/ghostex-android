@@ -319,6 +319,17 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
 
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent e) {
+        /*
+        CDXC:AndroidNavigation 2026-05-20-14:42:
+        TerminalView can receive KEYCODE_BACK directly before Activity back
+        dispatch, including when Ghostex has not attached an emulator yet.
+        Route that key through the Ghostex sidebar policy before any legacy
+        Termux exit behavior.
+        */
+        if (keyCode == KeyEvent.KEYCODE_BACK && mActivity.handleGhostexBackRequest()) {
+            return true;
+        }
+
         // If emulator is not set, like if bootstrap installation failed and user dismissed the error
         // dialog, then just exit the activity, otherwise they will be stuck in a broken state.
         if (keyCode == KeyEvent.KEYCODE_BACK && mActivity.getTerminalView().mEmulator == null) {

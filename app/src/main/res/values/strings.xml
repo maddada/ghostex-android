@@ -85,6 +85,8 @@
 
     <string name="action_reset_terminal">Reset</string>
     <string name="msg_terminal_reset">Terminal reset</string>
+    <!-- CDXC:AndroidTerminalLifecycle 2026-05-21-07:13: When the last terminal closes, Ghostex Android should stay open and confirm the terminal exit with concise toast copy. -->
+    <string name="msg_terminal_quit">Terminal quit</string>
 
     <string name="action_kill_process">Kill process (%d)</string>
     <string name="title_confirm_kill_process">Really kill this session?</string>
@@ -120,15 +122,12 @@
     <string name="ghostex_drawer_sessions">Sessions</string>
     <string name="ghostex_drawer_exit_app">Exit Ghostex Android</string>
     <string name="ghostex_drawer_settings">Settings</string>
-    <string name="ghostex_settings_status">Edit terminal behavior and display settings.</string>
+    <string name="ghostex_settings_status">Edit terminal behavior and remote-session alerts.</string>
     <string name="ghostex_drawer_refresh_sessions">Refresh sessions</string>
     <string name="ghostex_drawer_tailscale">Tailscale</string>
     <string name="ghostex_drawer_setup">Setup</string>
     <string name="ghostex_drawer_retry">Retry</string>
     <string name="ghostex_drawer_add">Add</string>
-    <string name="ghostex_keyboard_fab_text">⌨</string>
-    <string name="ghostex_file_attach_fab_text">▧</string>
-    <string name="ghostex_terminal_refresh_fab_text">↕</string>
     <string name="ghostex_save_password_securely">Save password securely on this device</string>
     <string name="ghostex_password_saving_requires_android_m">Password saving requires Android 6.0 or newer</string>
 

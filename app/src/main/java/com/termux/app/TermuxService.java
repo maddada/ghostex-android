@@ -14,13 +14,17 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.view.View;
+import android.widget.RemoteViews;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.termux.R;
+import com.termux.app.ghostex.GhostexRemoteSession;
 import com.termux.app.ghostex.GhostexFileLogger;
 import com.termux.app.ghostex.GhostexServiceNotificationFormatter;
+import com.termux.app.ghostex.GhostexServiceNotificationState;
 import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
 import com.termux.app.terminal.TermuxTerminalSessionServiceClient;
 import com.termux.shared.termux.plugins.TermuxPluginUtils;
@@ -109,6 +113,9 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     boolean mWantsToStop = false;
 
     private static final String LOG_TAG = "TermuxService";
+    private static final int GHOSTEX_NOTIFICATION_DONE_COLOR = 0xFF22C55E;
+    private static final int GHOSTEX_NOTIFICATION_WORKING_COLOR = 0xFFF59E0B;
+    private static final int GHOSTEX_NOTIFICATION_MUTED_COLOR = 0xFF9CA3AF;
 
     @Override
     public void onCreate() {
@@ -177,6 +184,8 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     @Override
     public void onDestroy() {
         Logger.logVerbose(LOG_TAG, "onDestroy");
+
+        GhostexServiceNotificationState.clearSessions();
 
         TermuxShellUtils.clearTermuxTMPDIR(true);
 
@@ -867,7 +876,20 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         int sessionCount = getTermuxSessionsSize();
         int taskCount = mShellManager.mTermuxTasks.size();
         final boolean wakeLockHeld = mWakeLock != null;
-        String notificationText = GhostexServiceNotificationFormatter.buildText(sessionCount, taskCount, wakeLockHeld);
+        ArrayList<GhostexRemoteSession> notificationSessions = GhostexServiceNotificationState.sessions();
+        /*
+        CDXC:AndroidNotifications 2026-05-21-23:52:
+        Remote-session notifications should not show a Ghostex title plus a
+        count summary in the notification body. Use the latest session titles
+        for the standard notification title/text fallback while custom
+        collapsed and expanded layouts render the actual session rows.
+        */
+        CharSequence notificationTitle = notificationSessions.isEmpty()
+            ? TermuxConstants.TERMUX_APP_NAME
+            : notificationSessionTitle(notificationSessions.get(0));
+        String notificationText = notificationSessions.isEmpty()
+            ? GhostexServiceNotificationFormatter.buildText(sessionCount, taskCount, wakeLockHeld)
+            : notificationSecondarySessionText(notificationSessions);
 
 
         // Set notification priority
@@ -879,7 +901,7 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         // Build the notification
         Notification.Builder builder =  NotificationUtils.geNotificationBuilder(this,
             TermuxConstants.TERMUX_APP_NOTIFICATION_CHANNEL_ID, priority,
-            TermuxConstants.TERMUX_APP_NAME, notificationText, null,
+            notificationTitle, notificationText, null,
             contentIntent, null, NotificationUtils.NOTIFICATION_MODE_SILENT);
         if (builder == null)  return null;
 
@@ -891,25 +913,165 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
 
         // Set background color for small notification icon
         builder.setColor(0xFF607D8B);
+        if (!notificationSessions.isEmpty()) {
+            applyGhostexStatusIndicator(builder, notificationSessions);
+        }
 
         // TermuxSessions are always ongoing
         builder.setOngoing(true);
 
+        if (!notificationSessions.isEmpty()) {
+            applyGhostexSessionNotificationViews(builder, notificationSessions, notificationPendingIntentFlags);
+        }
 
-        // Set Exit button action
-        Intent exitIntent = new Intent(this, TermuxService.class).setAction(TERMUX_SERVICE.ACTION_STOP_SERVICE);
-        builder.addAction(android.R.drawable.ic_delete, res.getString(R.string.notification_action_exit), PendingIntent.getService(this, 0, exitIntent, notificationPendingIntentFlags));
+
+        if (notificationSessions.isEmpty()) {
+            /*
+            CDXC:AndroidNotifications 2026-05-21-23:52:
+            When remote session rows are present, the notification should be a
+            rows-only session surface without bottom action buttons. Keep the
+            legacy Disconnect/Keep awake actions only for the generic foreground
+            service fallback that has no remote session inventory yet.
+            */
+            // Set Exit button action
+            Intent exitIntent = new Intent(this, TermuxService.class).setAction(TERMUX_SERVICE.ACTION_STOP_SERVICE);
+            builder.addAction(android.R.drawable.ic_delete, res.getString(R.string.notification_action_exit), PendingIntent.getService(this, 0, exitIntent, notificationPendingIntentFlags));
 
 
-        // Set Wakelock button actions
-        String newWakeAction = wakeLockHeld ? TERMUX_SERVICE.ACTION_WAKE_UNLOCK : TERMUX_SERVICE.ACTION_WAKE_LOCK;
-        Intent toggleWakeLockIntent = new Intent(this, TermuxService.class).setAction(newWakeAction);
-        String actionTitle = res.getString(wakeLockHeld ? R.string.notification_action_wake_unlock : R.string.notification_action_wake_lock);
-        int actionIcon = wakeLockHeld ? android.R.drawable.ic_lock_idle_lock : android.R.drawable.ic_lock_lock;
-        builder.addAction(actionIcon, actionTitle, PendingIntent.getService(this, 0, toggleWakeLockIntent, notificationPendingIntentFlags));
+            // Set Wakelock button actions
+            String newWakeAction = wakeLockHeld ? TERMUX_SERVICE.ACTION_WAKE_UNLOCK : TERMUX_SERVICE.ACTION_WAKE_LOCK;
+            Intent toggleWakeLockIntent = new Intent(this, TermuxService.class).setAction(newWakeAction);
+            String actionTitle = res.getString(wakeLockHeld ? R.string.notification_action_wake_unlock : R.string.notification_action_wake_lock);
+            int actionIcon = wakeLockHeld ? android.R.drawable.ic_lock_idle_lock : android.R.drawable.ic_lock_lock;
+            builder.addAction(actionIcon, actionTitle, PendingIntent.getService(this, 0, toggleWakeLockIntent, notificationPendingIntentFlags));
+        }
 
 
         return builder.build();
+    }
+
+    private void applyGhostexSessionNotificationViews(@NonNull Notification.Builder builder,
+                                                      @NonNull ArrayList<GhostexRemoteSession> sessions,
+                                                      int pendingIntentFlags) {
+        RemoteViews collapsed = buildGhostexSessionNotificationView(
+            R.layout.notification_ghostex_collapsed, sessions, 2, pendingIntentFlags, false);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            RemoteViews expanded = buildGhostexSessionNotificationView(
+                R.layout.notification_ghostex_expanded, sessions, 5, pendingIntentFlags, true);
+            builder.setCustomContentView(collapsed);
+            builder.setCustomBigContentView(expanded);
+            builder.setStyle(new Notification.DecoratedCustomViewStyle());
+        } else {
+            builder.setContent(collapsed);
+        }
+    }
+
+    private RemoteViews buildGhostexSessionNotificationView(int layoutId,
+                                                           @NonNull ArrayList<GhostexRemoteSession> sessions,
+                                                           int maxRows,
+                                                           int pendingIntentFlags,
+                                                           boolean includeProjectName) {
+        RemoteViews views = new RemoteViews(getPackageName(), layoutId);
+
+        int[] rowIds = {
+            R.id.notification_row_1,
+            R.id.notification_row_2,
+            R.id.notification_row_3,
+            R.id.notification_row_4,
+            R.id.notification_row_5
+        };
+        int[] dotIds = {
+            R.id.notification_row_1_dot,
+            R.id.notification_row_2_dot,
+            R.id.notification_row_3_dot,
+            R.id.notification_row_4_dot,
+            R.id.notification_row_5_dot
+        };
+        int[] titleIds = {
+            R.id.notification_row_1_title,
+            R.id.notification_row_2_title,
+            R.id.notification_row_3_title,
+            R.id.notification_row_4_title,
+            R.id.notification_row_5_title
+        };
+        int[] projectIds = {
+            R.id.notification_row_1_project,
+            R.id.notification_row_2_project,
+            R.id.notification_row_3_project,
+            R.id.notification_row_4_project,
+            R.id.notification_row_5_project
+        };
+
+        int rowCount = Math.min(maxRows, rowIds.length);
+        for (int index = 0; index < rowCount; index++) {
+            if (index >= maxRows || index >= sessions.size()) {
+                views.setViewVisibility(rowIds[index], View.GONE);
+                continue;
+            }
+            GhostexRemoteSession session = sessions.get(index);
+            views.setViewVisibility(rowIds[index], View.VISIBLE);
+            views.setTextViewText(titleIds[index], notificationSessionTitle(session));
+            views.setTextColor(dotIds[index], notificationSessionColor(session));
+            views.setOnClickPendingIntent(rowIds[index],
+                notificationSessionPendingIntent(session, index, pendingIntentFlags));
+            if (includeProjectName) {
+                views.setTextViewText(projectIds[index], session.displayProjectName());
+            }
+        }
+        return views;
+    }
+
+    private void applyGhostexStatusIndicator(@NonNull Notification.Builder builder,
+                                             @NonNull ArrayList<GhostexRemoteSession> sessions) {
+        /*
+        CDXC:AndroidNotifications 2026-05-21-23:52:
+        Android's status bar/notification header can expose one count, not two
+        custom colored status icons. Publish one prioritized number through the
+        platform notification count and tint: done green, otherwise working
+        orange, otherwise running gray.
+        */
+        GhostexServiceNotificationFormatter.StatusIndicator indicator =
+            GhostexServiceNotificationFormatter.statusIndicator(sessions);
+        if (indicator.count <= 0) return;
+        builder.setNumber(indicator.count);
+        builder.setColor(notificationStatusColor(indicator.state));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder.setBadgeIconType(Notification.BADGE_ICON_SMALL);
+        }
+    }
+
+    private int notificationStatusColor(@NonNull String state) {
+        if ("done".equals(state)) return GHOSTEX_NOTIFICATION_DONE_COLOR;
+        if ("working".equals(state)) return GHOSTEX_NOTIFICATION_WORKING_COLOR;
+        return GHOSTEX_NOTIFICATION_MUTED_COLOR;
+    }
+
+    private PendingIntent notificationSessionPendingIntent(@NonNull GhostexRemoteSession session,
+                                                          int rowIndex,
+                                                          int notificationPendingIntentFlags) {
+        Intent intent = TermuxActivity.newGhostexNotificationSessionIntent(this, session.sessionId);
+        int requestCode = 10_000 + rowIndex + Math.abs(session.sessionId.hashCode() % 10_000);
+        return PendingIntent.getActivity(this, requestCode, intent, notificationPendingIntentFlags | PendingIntent.FLAG_UPDATE_CURRENT);
+    }
+
+    @NonNull
+    private String notificationSessionTitle(@NonNull GhostexRemoteSession session) {
+        if (!session.title.trim().isEmpty()) return session.title.trim();
+        if (!session.alias.trim().isEmpty()) return "Session " + session.alias.trim();
+        return "Ghostex session";
+    }
+
+    private int notificationSessionColor(@NonNull GhostexRemoteSession session) {
+        if (GhostexServiceNotificationFormatter.isDone(session)) return GHOSTEX_NOTIFICATION_DONE_COLOR;
+        if (GhostexServiceNotificationFormatter.isWorking(session)) return GHOSTEX_NOTIFICATION_WORKING_COLOR;
+        return GHOSTEX_NOTIFICATION_MUTED_COLOR;
+    }
+
+    @NonNull
+    private String notificationSecondarySessionText(@NonNull ArrayList<GhostexRemoteSession> sessions) {
+        if (sessions.size() > 1) return notificationSessionTitle(sessions.get(1));
+        GhostexRemoteSession session = sessions.get(0);
+        return session.displayProjectName();
     }
 
     private void setupNotificationChannel() {
@@ -921,12 +1083,23 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
 
     /** Update the shown foreground service notification after making any changes that affect it. */
     private synchronized void updateNotification() {
-        if (mWakeLock == null && mShellManager.mTermuxSessions.isEmpty() && mShellManager.mTermuxTasks.isEmpty()) {
+        /*
+        CDXC:AndroidNotifications 2026-05-21-23:29:
+        Remote session inventory can be the foreground notification's primary
+        content even when no local Termux shell is attached yet. Keep the
+        service notification alive while those row targets exist.
+        */
+        if (mWakeLock == null && mShellManager.mTermuxSessions.isEmpty() && mShellManager.mTermuxTasks.isEmpty()
+            && GhostexServiceNotificationState.sessions().isEmpty()) {
             // Exit if we are updating after the user disabled all locks with no sessions or tasks running.
             requestStopService();
         } else {
             ((NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE)).notify(TermuxConstants.TERMUX_APP_NOTIFICATION_ID, buildNotification());
         }
+    }
+
+    public synchronized void refreshNotification() {
+        updateNotification();
     }
 
 

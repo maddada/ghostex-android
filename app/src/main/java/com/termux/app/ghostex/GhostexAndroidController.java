@@ -8,6 +8,8 @@ import android.content.Context;
 import android.database.Cursor;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.media.AudioAttributes;
+import android.media.SoundPool;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
@@ -19,13 +21,11 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.MimeTypeMap;
-import android.widget.ArrayAdapter;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ScrollView;
-import android.widget.Spinner;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -110,6 +110,11 @@ public final class GhostexAndroidController {
     private long attachGeneration;
     private int imagePasteCount;
     private int filePasteCount;
+    private String pendingNotificationSessionId;
+    private SoundPool doneNotificationSoundPool;
+    private int doneNotificationSoundId;
+    private boolean doneNotificationSoundLoaded;
+    private boolean pendingDoneNotificationSound;
     private boolean destroyed;
 
     /*
@@ -442,6 +447,7 @@ public final class GhostexAndroidController {
         drawerSessionPollGeneration++;
         sessionPasswords.clear();
         stopDrawerSessionPolling();
+        releaseDoneNotificationSoundPool();
         if (drawerSessionPollListener != null) {
             activity.getDrawer().removeDrawerListener(drawerSessionPollListener);
             drawerSessionPollListener = null;
@@ -576,6 +582,7 @@ public final class GhostexAndroidController {
         settingsPage = activity.findViewById(R.id.ghostex_settings_page);
         machinesPageList = activity.findViewById(R.id.ghostex_machines_page_list);
         settingsPageList = activity.findViewById(R.id.ghostex_settings_page_list);
+        applyFloatingTerminalControlSettings();
         GhostexEdgeToEdgeInsets.applyToReleaseSurface(activity.findViewById(R.id.drawer_layout));
         sessionsList = activity.findViewById(R.id.terminal_sessions_list);
         sessionAdapter = new GhostexRemoteSessionAdapter(activity, drawerItems);
@@ -786,6 +793,10 @@ public final class GhostexAndroidController {
         LinearLayout behaviorCard = card();
         addTitle(behaviorCard, "Terminal behavior", 16);
         addBody(behaviorCard, "Control how the active terminal follows output and handles phone input.");
+        /*
+        CDXC:AndroidSettings 2026-05-21-08:52:
+        Terminal Behavior needs readable spacing and hierarchy inside the in-drawer settings page. Render each option as a dedicated row with bold title text, dimmer subtitle copy, and separated rows so adjacent settings do not run together on phone screens.
+        */
         behaviorCard.addView(settingCheckBox("Auto scroll", "Follow new terminal output unless text is selected.",
             terminalSettingsStore.isAutoScrollEnabled(), checked -> {
                 terminalSettingsStore.setAutoScrollEnabled(checked);
@@ -808,6 +819,33 @@ public final class GhostexAndroidController {
                 terminalSettingsStore.setKeepScreenOn(checked);
                 activity.getTerminalView().setKeepScreenOn(checked);
                 setSettingsStatus(checked ? "Screen will stay on." : "Screen can sleep normally.");
+            }));
+        /*
+        CDXC:AndroidTerminalControls 2026-05-21-09:27:
+        Users can hide each floating bottom terminal control independently because refresh, upload, and keyboard affordances overlap terminal content even when dimmed. Defaults stay visible so existing installs keep the current workflow until a user opts out.
+        */
+        behaviorCard.addView(settingCheckBox("Show refresh button", "Show the bottom reload control that sends PageUp/PageDown.",
+            terminalSettingsStore.isRefreshButtonVisible(), checked -> {
+                terminalSettingsStore.setRefreshButtonVisible(checked);
+                applyFloatingTerminalControlSettings();
+                setSettingsStatus(checked ? "Refresh button is visible." : "Refresh button is hidden.");
+            }));
+        behaviorCard.addView(settingCheckBox("Show upload button", "Show the bottom file/image upload control.",
+            terminalSettingsStore.isFileUploadButtonVisible(), checked -> {
+                terminalSettingsStore.setFileUploadButtonVisible(checked);
+                applyFloatingTerminalControlSettings();
+                setSettingsStatus(checked ? "Upload button is visible." : "Upload button is hidden.");
+            }));
+        behaviorCard.addView(settingCheckBox("Show keyboard button", "Show the bottom keyboard show/hide control.",
+            terminalSettingsStore.isKeyboardButtonVisible(), checked -> {
+                terminalSettingsStore.setKeyboardButtonVisible(checked);
+                applyFloatingTerminalControlSettings();
+                setSettingsStatus(checked ? "Keyboard button is visible." : "Keyboard button is hidden.");
+            }));
+        behaviorCard.addView(settingCheckBox("Done notification sound", "Play a sound when a remote session changes to Done or attention.",
+            terminalSettingsStore.isDoneNotificationSoundEnabled(), checked -> {
+                terminalSettingsStore.setDoneNotificationSoundEnabled(checked);
+                setSettingsStatus(checked ? "Done notification sound is on." : "Done notification sound is off.");
             }));
         behaviorCard.addView(settingCheckBox("Fullscreen", "Use Termux's fullscreen terminal mode.",
             terminalSettingsStore.isFullscreenEnabled(), checked ->
@@ -845,24 +883,10 @@ public final class GhostexAndroidController {
             actionPill("Examples", v -> showExtraKeysExamples()));
         settingsPageList.addView(withBottomMargin(extraKeysCard, dp(12)));
 
-        LinearLayout displayCard = card();
-        addTitle(displayCard, "Display", 16);
-        addBody(displayCard, "Choose Termux's built-in extra-key symbol style and app night mode.");
-        displayCard.addView(settingDropdown("Extra keys style",
-            new String[] { "default", "arrows-only", "arrows-all", "all", "none" },
-            terminalSettingsStore.getExtraKeysStyle(),
-            value -> setSettingsProperty(() -> terminalSettingsStore.setExtraKeysStyle(value),
-                "Extra keys style set to " + value + ".")));
-        displayCard.addView(withTopMargin(settingDropdown("Night mode",
-            new String[] {
-                TermuxPropertyConstants.IVALUE_NIGHT_MODE_SYSTEM,
-                TermuxPropertyConstants.IVALUE_NIGHT_MODE_TRUE,
-                TermuxPropertyConstants.IVALUE_NIGHT_MODE_FALSE
-            },
-            terminalSettingsStore.getNightMode(),
-            value -> setSettingsProperty(() -> terminalSettingsStore.setNightMode(value),
-                "Night mode set to " + value + ".")), dp(10)));
-        settingsPageList.addView(withBottomMargin(displayCard, dp(12)));
+        /*
+        CDXC:AndroidSettings 2026-05-21-08:52:
+        The in-drawer Settings sidebar should no longer include a separate Display area. Keep the page focused on terminal behavior, extra keys, font, scrollback, cursor, and alert/hardware-key controls.
+        */
 
         LinearLayout fontCard = card();
         int fontSize = terminalSettingsStore.getFontSize();
@@ -971,51 +995,44 @@ public final class GhostexAndroidController {
         applyAutoScrollSettingToCurrentTerminal();
     }
 
-    private CheckBox settingCheckBox(@NonNull String title,
-                                     @NonNull String summary,
-                                     boolean checked,
-                                     @NonNull SettingCheckedListener listener) {
+    private View settingCheckBox(@NonNull String title,
+                                 @NonNull String summary,
+                                 boolean checked,
+                                 @NonNull SettingCheckedListener listener) {
+        LinearLayout row = new LinearLayout(activity);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(10), dp(10), dp(10));
+        row.setBackground(panelBackground(GHOSTEX_PANEL_ALT));
+        row.setContentDescription(GhostexAccessibilityCopy.join(title, summary, checked ? "On." : "Off.", "Tap to change."));
+
+        LinearLayout textColumn = new LinearLayout(activity);
+        textColumn.setOrientation(LinearLayout.VERTICAL);
+        textColumn.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView titleView = new TextView(activity);
+        titleView.setText(title);
+        titleView.setTextColor(GHOSTEX_TEXT);
+        titleView.setTextSize(14);
+        titleView.setTypeface(Typeface.DEFAULT_BOLD);
+        titleView.setIncludeFontPadding(false);
+
+        TextView summaryView = bodyText(summary);
+        summaryView.setTextSize(12);
+        summaryView.setPadding(0, dp(5), dp(10), 0);
+
+        textColumn.addView(titleView);
+        textColumn.addView(summaryView);
+        row.addView(textColumn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
         CheckBox checkBox = new CheckBox(activity);
-        checkBox.setText(title + "\n" + summary);
         checkBox.setChecked(checked);
-        checkBox.setContentDescription(GhostexAccessibilityCopy.join(title, summary, checked ? "On." : "Off.", "Tap to change."));
+        checkBox.setContentDescription(title);
         styleCheckBox(checkBox);
         checkBox.setOnCheckedChangeListener((buttonView, isChecked) -> listener.onCheckedChanged(isChecked));
-        return checkBox;
-    }
-
-    private LinearLayout settingDropdown(@NonNull String title,
-                                         @NonNull String[] values,
-                                         @NonNull String selectedValue,
-                                         @NonNull SettingSelectedListener listener) {
-        LinearLayout container = verticalContainer(dp(8));
-        addTitle(container, title, 14);
-        Spinner spinner = new Spinner(activity);
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(activity,
-            android.R.layout.simple_spinner_item, values);
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        spinner.setAdapter(adapter);
-        int selectedIndex = 0;
-        for (int i = 0; i < values.length; i++) {
-            if (values[i].equals(selectedValue)) {
-                selectedIndex = i;
-                break;
-            }
-        }
-        spinner.setSelection(selectedIndex, false);
-        spinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
-                String value = values[position];
-                if (!value.equals(selectedValue)) listener.onSelected(value);
-            }
-
-            @Override
-            public void onNothingSelected(android.widget.AdapterView<?> parent) {
-            }
-        });
-        container.addView(spinner);
-        return container;
+        row.addView(checkBox, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        row.setOnClickListener(v -> checkBox.setChecked(!checkBox.isChecked()));
+        return withBottomMargin(row, dp(8));
     }
 
     private void applyAutoScrollSettingToCurrentTerminal() {
@@ -1023,6 +1040,13 @@ public final class GhostexAndroidController {
         if (emulator == null) return;
         emulator.setAutoScrollDisabled(!terminalSettingsStore.isAutoScrollEnabled());
         activity.getTerminalView().onScreenUpdated();
+    }
+
+    private void applyFloatingTerminalControlSettings() {
+        activity.setGhostexFloatingTerminalControlVisibility(
+            terminalSettingsStore.isRefreshButtonVisible(),
+            terminalSettingsStore.isFileUploadButtonVisible(),
+            terminalSettingsStore.isKeyboardButtonVisible());
     }
 
     private void setSettingsStatus(@NonNull String text) {
@@ -1268,6 +1292,7 @@ public final class GhostexAndroidController {
                 return;
             }
             remoteSessions.clear();
+            publishNotificationSessions();
             setDrawerState("Connection needs attention",
                 result.errorMessage == null ? "Could not connect to the selected machine." : result.errorMessage,
                 "Use Retry, Tailscale, Setup, or switch machines above.");
@@ -1302,8 +1327,17 @@ public final class GhostexAndroidController {
                                         @Nullable String successStatusOverride,
                                         boolean preserveDrawerList) {
         GhostexDrawerScrollAnchor scrollAnchor = preserveDrawerList ? captureDrawerScrollAnchor() : null;
+        /*
+        CDXC:AndroidNotifications 2026-05-21-08:52:
+        Android should play one notification sound when an already-known remote session changes into Done/attention. Compare the previous inventory before replacing it so polling and reconnect refreshes notify on transitions without repeating sounds for sessions that were already done.
+        */
+        HashMap<String, Boolean> previousDoneBySessionId = doneStateBySessionId(remoteSessions);
+        boolean shouldPlayDoneSound = hasNewDoneSessionTransition(previousDoneBySessionId, sessions);
         remoteSessions.clear();
         remoteSessions.addAll(sessions);
+        publishNotificationSessions();
+        if (shouldPlayDoneSound) playDoneNotificationSound();
+        consumePendingNotificationSession();
         sessionAdapter.setCurrentMachineId(machine.id);
         if (sessions.isEmpty()) {
             setDrawerState("No ZMX sessions yet",
@@ -1319,6 +1353,109 @@ public final class GhostexAndroidController {
         setStatus(successStatusOverride != null ? successStatusOverride : sessions.isEmpty()
             ? "Connected. No ZMX-backed Ghostex sessions are running."
             : "Connected to " + machine.displayLabel());
+    }
+
+    public void activateRemoteSessionFromNotification(@NonNull String sessionId) {
+        /*
+        CDXC:AndroidNotifications 2026-05-21-23:02:
+        A notification shade row represents a concrete remote ZMX session. Route
+        taps through the normal attach path so warm-session reuse, selected row
+        state, drawer focus, and SSHJ attach behavior match tapping the drawer.
+        */
+        for (GhostexRemoteSession session : remoteSessions) {
+            if (session.sessionId.equals(sessionId)) {
+                activity.getDrawer().closeDrawer(Gravity.LEFT);
+                attachRemoteSession(session);
+                return;
+            }
+        }
+        pendingNotificationSessionId = sessionId;
+        setStatus("Refreshing sessions before opening the selected notification session...");
+        activity.getDrawer().openDrawer(Gravity.LEFT);
+        refreshSessionInventory("Refreshing sessions...");
+    }
+
+    private void consumePendingNotificationSession() {
+        if (pendingNotificationSessionId == null || pendingNotificationSessionId.trim().isEmpty()) return;
+        String sessionId = pendingNotificationSessionId;
+        pendingNotificationSessionId = null;
+        for (GhostexRemoteSession session : remoteSessions) {
+            if (session.sessionId.equals(sessionId)) {
+                activity.getDrawer().closeDrawer(Gravity.LEFT);
+                attachRemoteSession(session);
+                return;
+            }
+        }
+    }
+
+    private void publishNotificationSessions() {
+        GhostexServiceNotificationState.updateSessions(remoteSessions);
+        TermuxService service = activity.getTermuxService();
+        if (service != null) service.refreshNotification();
+    }
+
+    @NonNull
+    private HashMap<String, Boolean> doneStateBySessionId(@NonNull List<GhostexRemoteSession> sessions) {
+        HashMap<String, Boolean> doneBySessionId = new HashMap<>();
+        for (GhostexRemoteSession session : sessions) {
+            doneBySessionId.put(session.sessionId, GhostexServiceNotificationFormatter.isDone(session));
+        }
+        return doneBySessionId;
+    }
+
+    private boolean hasNewDoneSessionTransition(@NonNull HashMap<String, Boolean> previousDoneBySessionId,
+                                                @NonNull List<GhostexRemoteSession> sessions) {
+        if (previousDoneBySessionId.isEmpty()) return false;
+        for (GhostexRemoteSession session : sessions) {
+            Boolean wasDone = previousDoneBySessionId.get(session.sessionId);
+            if (Boolean.FALSE.equals(wasDone) && GhostexServiceNotificationFormatter.isDone(session)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void playDoneNotificationSound() {
+        if (!terminalSettingsStore.isDoneNotificationSoundEnabled()) return;
+        pendingDoneNotificationSound = true;
+        loadDoneNotificationSoundPool();
+        if (doneNotificationSoundLoaded) {
+            pendingDoneNotificationSound = false;
+            doneNotificationSoundPool.play(doneNotificationSoundId, 1.f, 1.f, 1, 0, 1.f);
+        }
+    }
+
+    private void loadDoneNotificationSoundPool() {
+        if (doneNotificationSoundPool != null) return;
+        doneNotificationSoundPool = new SoundPool.Builder().setMaxStreams(1).setAudioAttributes(
+            new AudioAttributes.Builder()
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT)
+                .build()).build();
+        doneNotificationSoundPool.setOnLoadCompleteListener((soundPool, sampleId, status) -> {
+            if (sampleId != doneNotificationSoundId || status != 0) return;
+            doneNotificationSoundLoaded = true;
+            if (pendingDoneNotificationSound) {
+                pendingDoneNotificationSound = false;
+                soundPool.play(doneNotificationSoundId, 1.f, 1.f, 1, 0, 1.f);
+            }
+        });
+        try {
+            doneNotificationSoundId = doneNotificationSoundPool.load(activity, com.termux.shared.R.raw.bell, 1);
+        } catch (Exception error) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to load done notification sound", error);
+            releaseDoneNotificationSoundPool();
+        }
+    }
+
+    private void releaseDoneNotificationSoundPool() {
+        pendingDoneNotificationSound = false;
+        doneNotificationSoundLoaded = false;
+        doneNotificationSoundId = 0;
+        if (doneNotificationSoundPool != null) {
+            doneNotificationSoundPool.release();
+            doneNotificationSoundPool = null;
+        }
     }
 
     private boolean hasVisibleSessionList() {
@@ -3184,10 +3321,6 @@ public final class GhostexAndroidController {
 
     private interface SettingCheckedListener {
         void onCheckedChanged(boolean checked);
-    }
-
-    private interface SettingSelectedListener {
-        void onSelected(@NonNull String value);
     }
 
     private interface SettingsMutation {

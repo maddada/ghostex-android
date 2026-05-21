@@ -287,7 +287,7 @@ public final class TerminalView extends View {
      *
      * @param session The {@link TerminalSession} this view will be displaying.
      */
-    public boolean attachSession(TerminalSession session) {
+    public boolean attachSession(@Nullable TerminalSession session) {
         if (session == mTermSession) return false;
         mTopRow = 0;
 
@@ -297,8 +297,12 @@ public final class TerminalView extends View {
 
         updateSize();
 
-        // Wait with enabling the scrollbar until we have a terminal to get scroll position from.
-        setVerticalScrollBarEnabled(true);
+        /*
+        CDXC:AndroidTerminalLifecycle 2026-05-21-07:13:
+        When the final terminal quits, the activity intentionally remains open with no attached session.
+        A null session is the explicit blank-terminal state, so do not keep terminal scroll affordances visible for a removed session.
+        */
+        setVerticalScrollBarEnabled(session != null);
 
         return true;
     }

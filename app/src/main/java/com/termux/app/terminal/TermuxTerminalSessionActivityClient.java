@@ -11,6 +11,7 @@ import android.graphics.Typeface;
 import android.media.AudioAttributes;
 import android.media.SoundPool;
 import android.text.TextUtils;
+import android.view.Gravity;
 import android.widget.ListView;
 
 import androidx.annotation.NonNull;
@@ -438,8 +439,21 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
 
         int size = service.getTermuxSessionsSize();
         if (size == 0) {
-            // There are no sessions to show, so finish the activity.
-            mActivity.finishActivityIfNotFinishing();
+            /*
+            CDXC:AndroidTerminalLifecycle 2026-05-21-07:13:
+            Closing the last terminal should not close Ghostex Android.
+            Keep the activity open with an empty terminal surface and use a toast as the user-visible confirmation that the terminal quit.
+
+            CDXC:AndroidTerminalLifecycle 2026-05-21-07:21:
+            After the final terminal quits, open the Ghostex sidebar so the user lands on the remote-session launcher instead of a blank terminal surface.
+            */
+            mActivity.getPreferences().setCurrentSession(null);
+            mActivity.getTerminalView().attachSession(null);
+            mActivity.getTerminalView().invalidate();
+            mActivity.showToast(mActivity.getString(R.string.msg_terminal_quit), false);
+            if (mActivity.isGhostexAndroidMode()) {
+                mActivity.getDrawer().openDrawer(Gravity.LEFT);
+            }
         } else {
             if (index >= size) {
                 index = size - 1;

@@ -20,6 +20,7 @@ import android.view.ContextMenu.ContextMenuInfo;
 import android.view.Gravity;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -64,6 +65,7 @@ import com.termux.view.TerminalViewClient;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.activity.OnBackPressedCallback;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
@@ -140,6 +142,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
      */
     TermuxTerminalExtraKeys mTermuxTerminalExtraKeys;
 
+    private static final float GHOSTEX_FLOATING_TERMINAL_CONTROL_IDLE_ALPHA = 0.10f;
+    private static final float GHOSTEX_FLOATING_TERMINAL_CONTROL_ACTIVE_ALPHA = 1f;
+    private static final long GHOSTEX_FLOATING_TERMINAL_CONTROL_ACTIVE_MS = 5_000L;
+    private final Runnable mGhostexDimFloatingTerminalControlsRunnable = this::dimGhostexFloatingTerminalControls;
+
     /**
      * The termux sessions list controller.
      */
@@ -207,8 +214,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     private static final String ARG_TERMINAL_TOOLBAR_TEXT_INPUT = "terminal_toolbar_text_input";
     private static final String ARG_ACTIVITY_RECREATED = "activity_recreated";
+    public static final String ACTION_OPEN_GHOSTEX_REMOTE_SESSION = "io.ghostex.action.OPEN_REMOTE_SESSION";
+    public static final String EXTRA_GHOSTEX_REMOTE_SESSION_ID = "io.ghostex.extra.REMOTE_SESSION_ID";
 
     private static final String LOG_TAG = "TermuxActivity";
+    private String mPendingGhostexNotificationSessionId;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -267,6 +277,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         setToggleKeyboardView();
 
+        configureBackNavigation();
+
         mGhostexAndroidController = new GhostexAndroidController(this);
         requestNotificationPermissionIfNeeded();
 
@@ -296,6 +308,13 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         // Send the {@link TermuxConstants#BROADCAST_TERMUX_OPENED} broadcast to notify apps that Termux
         // app has been opened.
         TermuxUtils.sendTermuxOpenedBroadcast(this);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleGhostexNotificationIntent(intent);
     }
 
     @Override
@@ -474,6 +493,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         // Update the {@link TerminalSession} and {@link TerminalEmulator} clients.
         mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
+        handleGhostexNotificationIntent(intent);
     }
 
     @Override
@@ -658,6 +678,22 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         return findViewById(R.id.ghostex_open_tailscale_button) != null;
     }
 
+    private void configureBackNavigation() {
+        /*
+        CDXC:AndroidNavigation 2026-05-20-14:42:
+        API-level back dispatch can bypass the legacy onBackPressed override.
+        Register an activity dispatcher callback so every Android back gesture
+        first enters the same Ghostex sidebar-opening policy.
+        */
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (handleGhostexBackRequest()) return;
+                handleDefaultBackRequest();
+            }
+        });
+    }
+
     private void setToggleKeyboardView() {
         View sidebarKeyboardButton = findViewById(R.id.toggle_keyboard_button);
         if (sidebarKeyboardButton != null) sidebarKeyboardButton.setOnClickListener(v -> {
@@ -671,22 +707,79 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         });
 
         View floatingKeyboardButton = findViewById(R.id.ghostex_keyboard_fab);
+        configureFloatingTerminalControlTouch(floatingKeyboardButton);
         if (floatingKeyboardButton != null) floatingKeyboardButton.setOnClickListener(v -> {
             mTermuxTerminalViewClient.onToggleSoftKeyboardRequest();
         });
 
         if (floatingKeyboardButton != null) floatingKeyboardButton.setOnLongClickListener(v -> {
+            revealGhostexFloatingTerminalControls();
             toggleTerminalToolbar();
             return true;
         });
 
         View floatingFileButton = findViewById(R.id.ghostex_file_attach_fab);
+        configureFloatingTerminalControlTouch(floatingFileButton);
         if (floatingFileButton != null) floatingFileButton.setOnClickListener(v -> openGhostexFilePicker());
 
         View floatingRefreshButton = findViewById(R.id.ghostex_terminal_refresh_fab);
+        configureFloatingTerminalControlTouch(floatingRefreshButton);
         if (floatingRefreshButton != null) floatingRefreshButton.setOnClickListener(v -> {
             if (mGhostexAndroidController != null) mGhostexAndroidController.refreshCurrentTerminal();
         });
+        dimGhostexFloatingTerminalControls();
+    }
+
+    private void configureFloatingTerminalControlTouch(@Nullable View view) {
+        if (view == null) return;
+        /*
+        CDXC:AndroidTerminalControls 2026-05-21-09:27:
+        The floating refresh/upload/keyboard controls should not block terminal reading. Keep them at 10% opacity until any one is touched, then brighten the whole group for five seconds so the user can see and use adjacent controls.
+        */
+        view.setOnTouchListener((touchedView, event) -> {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                revealGhostexFloatingTerminalControls();
+            }
+            return false;
+        });
+    }
+
+    public void setGhostexFloatingTerminalControlVisibility(boolean refreshVisible,
+                                                           boolean fileUploadVisible,
+                                                           boolean keyboardVisible) {
+        setGhostexFloatingTerminalControlVisibility(R.id.ghostex_terminal_refresh_fab, refreshVisible);
+        setGhostexFloatingTerminalControlVisibility(R.id.ghostex_file_attach_fab, fileUploadVisible);
+        setGhostexFloatingTerminalControlVisibility(R.id.ghostex_keyboard_fab, keyboardVisible);
+        dimGhostexFloatingTerminalControls();
+    }
+
+    private void setGhostexFloatingTerminalControlVisibility(int viewId, boolean visible) {
+        View view = findViewById(viewId);
+        if (view != null) view.setVisibility(visible ? View.VISIBLE : View.GONE);
+    }
+
+    private void revealGhostexFloatingTerminalControls() {
+        setGhostexFloatingTerminalControlsAlpha(GHOSTEX_FLOATING_TERMINAL_CONTROL_ACTIVE_ALPHA);
+        View anchor = findViewById(R.id.ghostex_terminal_surface);
+        if (anchor == null) anchor = findViewById(R.id.ghostex_keyboard_fab);
+        if (anchor == null) return;
+        anchor.removeCallbacks(mGhostexDimFloatingTerminalControlsRunnable);
+        anchor.postDelayed(mGhostexDimFloatingTerminalControlsRunnable, GHOSTEX_FLOATING_TERMINAL_CONTROL_ACTIVE_MS);
+    }
+
+    private void dimGhostexFloatingTerminalControls() {
+        setGhostexFloatingTerminalControlsAlpha(GHOSTEX_FLOATING_TERMINAL_CONTROL_IDLE_ALPHA);
+    }
+
+    private void setGhostexFloatingTerminalControlsAlpha(float alpha) {
+        setGhostexFloatingTerminalControlAlpha(R.id.ghostex_terminal_refresh_fab, alpha);
+        setGhostexFloatingTerminalControlAlpha(R.id.ghostex_file_attach_fab, alpha);
+        setGhostexFloatingTerminalControlAlpha(R.id.ghostex_keyboard_fab, alpha);
+    }
+
+    private void setGhostexFloatingTerminalControlAlpha(int viewId, float alpha) {
+        View view = findViewById(viewId);
+        if (view != null) view.setAlpha(alpha);
     }
 
     private void openGhostexFilePicker() {
@@ -715,18 +808,24 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     @SuppressLint({"RtlHardcoded", "MissingSuperCall"})
     @Override
     public void onBackPressed() {
-        if (isGhostexDrawerLayoutInstalled()) {
-            /*
-            CDXC:AndroidNavigation 2026-05-18-04:43:
-            Ghostex Android's primary navigation lives in the remote-session
-            sidebar, and the Android back button must never exit the app in
-            Ghostex mode. Always open or keep open the sidebar; app exit is an
-            explicit drawer action.
-            */
-            getDrawer().openDrawer(Gravity.LEFT);
-            return;
-        }
+        if (handleGhostexBackRequest()) return;
+        handleDefaultBackRequest();
+    }
 
+    public boolean handleGhostexBackRequest() {
+        if (!isGhostexDrawerLayoutInstalled()) return false;
+        /*
+        CDXC:AndroidNavigation 2026-05-20-14:42:
+        Ghostex Android's primary navigation lives in the remote-session
+        sidebar, and the Android back button must never exit the app in
+        Ghostex mode. Always open or keep open the sidebar from every back
+        path; app exit is an explicit drawer action.
+        */
+        getDrawer().openDrawer(Gravity.LEFT);
+        return true;
+    }
+
+    private void handleDefaultBackRequest() {
         if (getDrawer().isDrawerOpen(Gravity.LEFT)) {
             getDrawer().closeDrawers();
         } else {
@@ -1206,6 +1305,37 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         Intent intent = new Intent(context, TermuxActivity.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         return intent;
+    }
+
+    public static Intent newGhostexNotificationSessionIntent(@NonNull final Context context,
+                                                             @NonNull final String sessionId) {
+        /*
+        CDXC:AndroidNotifications 2026-05-21-23:02:
+        Notification shade session rows must reopen Ghostex Android and activate
+        the exact remote session the user tapped, not merely launch the last
+        visible terminal.
+        */
+        Intent intent = newInstance(context);
+        intent.setAction(ACTION_OPEN_GHOSTEX_REMOTE_SESSION);
+        intent.putExtra(EXTRA_GHOSTEX_REMOTE_SESSION_ID, sessionId);
+        return intent;
+    }
+
+    private void handleGhostexNotificationIntent(@Nullable Intent intent) {
+        String sessionId = null;
+        if (intent != null && ACTION_OPEN_GHOSTEX_REMOTE_SESSION.equals(intent.getAction())) {
+            sessionId = intent.getStringExtra(EXTRA_GHOSTEX_REMOTE_SESSION_ID);
+        }
+        if ((sessionId == null || sessionId.trim().isEmpty()) && mPendingGhostexNotificationSessionId != null) {
+            sessionId = mPendingGhostexNotificationSessionId;
+        }
+        if (sessionId == null || sessionId.trim().isEmpty()) return;
+        if (mGhostexAndroidController == null || mTermuxService == null) {
+            mPendingGhostexNotificationSessionId = sessionId;
+            return;
+        }
+        mPendingGhostexNotificationSessionId = null;
+        mGhostexAndroidController.activateRemoteSessionFromNotification(sessionId.trim());
     }
 
 }
