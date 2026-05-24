@@ -47,6 +47,10 @@ public final class GhostexRemoteSessionAdapterTest {
     Project headers are disclosure rows. The title and plus controls must share
     one exact 32dp height while the vertical-dots icon is visually smaller
     inside the same button height.
+
+    CDXC:AndroidSidebar 2026-05-23-14:40:
+    Mobile session cards need a visible status dot so the Android app shows
+    working state when the macOS desktop status indicator does.
     */
     @Test
     public void stateCardHasRecoveryContentDescription() {
@@ -178,6 +182,18 @@ public final class GhostexRemoteSessionAdapterTest {
         Assert.assertNull(view.findViewWithTag("statusPill"));
         Assert.assertNotNull(view.findViewWithTag("title"));
         Assert.assertNotNull(view.findViewWithTag("agentIcon"));
+        Assert.assertNotNull(view.findViewWithTag("statusDot"));
+    }
+
+    @Test
+    public void sessionRowShowsWorkingStatusDot() {
+        GhostexRemoteSessionAdapter adapter = adapterForSessions();
+        View view = adapter.getView(1, null, new FrameLayout(RuntimeEnvironment.getApplication()));
+        TextView statusDot = view.findViewWithTag("statusDot");
+
+        Assert.assertEquals("\u25CF", statusDot.getText().toString());
+        Assert.assertEquals(GhostexPalette.STATUS_WORKING, statusDot.getCurrentTextColor());
+        Assert.assertTrue(view.getContentDescription().toString().contains("Working."));
     }
 
     @Test
@@ -187,6 +203,15 @@ public final class GhostexRemoteSessionAdapterTest {
             "zmx", "zmx-main", "codex", "2026-05-17T10:00:00Z", true, false);
 
         Assert.assertEquals(Color.rgb(125, 211, 252), GhostexRemoteSessionAdapter.statusColor(focused));
+    }
+
+    @Test
+    public void workingStatusColorOverridesFocusedAccent() {
+        GhostexRemoteSession focusedWorking = new GhostexRemoteSession("4", "session-4", "project-1",
+            "Focused working", "Ghostex", "/Users/madda/dev/_active/zmux", "working", "running",
+            "zmx", "zmx-main", "codex", "2026-05-17T10:00:00Z", true, false);
+
+        Assert.assertEquals(GhostexPalette.STATUS_WORKING, GhostexRemoteSessionAdapter.statusColor(focusedWorking));
     }
 
     private GhostexRemoteSessionAdapter adapterForSessions() {

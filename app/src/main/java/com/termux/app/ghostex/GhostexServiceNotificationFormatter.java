@@ -3,6 +3,8 @@ package com.termux.app.ghostex;
 import androidx.annotation.NonNull;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
@@ -39,13 +41,27 @@ public final class GhostexServiceNotificationFormatter {
 
     /*
     CDXC:AndroidNotifications 2026-05-21-22:57:
-    Android's notification shade uses the Mac inventory order, which is already
-    the latest-session order. Preserve that order here so collapsed notifications
-    can show the two latest sessions while the status-bar count handles done,
-    in-progress, and running precedence separately.
+    Android's notification shade starts from the Mac inventory order, which is
+    already the latest-session order. Keep that source order stable within each
+    notification priority bucket so Android rows remain predictable.
+
+    CDXC:AndroidNotifications 2026-05-23-14:40:
+    Android notification rows must make the same working state visible that the
+    macOS desktop status indicator shows. Prioritize done/attention rows first,
+    then working rows, then ordinary running rows while preserving Mac order
+    within each state bucket so actionable session indicators are not hidden
+    below newer idle sessions.
     */
     public static ArrayList<GhostexRemoteSession> sortForNotification(@NonNull List<GhostexRemoteSession> sessions) {
-        return new ArrayList<>(sessions);
+        ArrayList<GhostexRemoteSession> sortedSessions = new ArrayList<>(sessions);
+        Collections.sort(sortedSessions, Comparator.comparingInt(GhostexServiceNotificationFormatter::notificationPriority));
+        return sortedSessions;
+    }
+
+    private static int notificationPriority(@NonNull GhostexRemoteSession session) {
+        if (isDone(session)) return 0;
+        if (isWorking(session)) return 1;
+        return 2;
     }
 
     public static int doneCount(@NonNull List<GhostexRemoteSession> sessions) {

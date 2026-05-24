@@ -26,12 +26,12 @@ public final class GhostexServiceNotificationFormatterTest {
     }
 
     @Test
-    public void preservesInventoryOrderForLatestNotificationRows() {
+    public void prioritizesActionableNotificationRows() {
         /*
-        CDXC:AndroidNotifications 2026-05-21-23:52:
-        Notification shade rows should show the latest inventory rows from the
-        Mac instead of reordering by status. The single status-bar count handles
-        done, in-progress, then running precedence independently.
+        CDXC:AndroidNotifications 2026-05-23-14:40:
+        Notification shade rows must expose actionable state before ordinary
+        idle/running sessions, otherwise a Mac-visible working indicator can be
+        hidden below newer idle inventory rows on Android.
         */
         ArrayList<GhostexRemoteSession> sessions = GhostexServiceNotificationFormatter.sortForNotification(Arrays.asList(
             session("working-new", "working", "running", "2026-05-21T19:25:00Z"),
@@ -40,10 +40,10 @@ public final class GhostexServiceNotificationFormatterTest {
             session("attention", "attention", "running", "2026-05-21T17:00:00Z")
         ));
 
-        Assert.assertEquals("session-working-new", sessions.get(0).sessionId);
-        Assert.assertEquals("session-done-old", sessions.get(1).sessionId);
-        Assert.assertEquals("session-idle-newer", sessions.get(2).sessionId);
-        Assert.assertEquals("session-attention", sessions.get(3).sessionId);
+        Assert.assertEquals("session-done-old", sessions.get(0).sessionId);
+        Assert.assertEquals("session-attention", sessions.get(1).sessionId);
+        Assert.assertEquals("session-working-new", sessions.get(2).sessionId);
+        Assert.assertEquals("session-idle-newer", sessions.get(3).sessionId);
     }
 
     @Test

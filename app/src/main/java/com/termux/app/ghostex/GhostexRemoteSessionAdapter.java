@@ -132,6 +132,12 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
     Session cards show the agent logo on the left, matching macOS sidebar session
     buttons. Use the shared Ghostex agentIcon field when present and fall back to
     the terminal glyph for plain terminal sessions.
+
+    CDXC:AndroidSidebar 2026-05-23-14:40:
+    Android session rows must show the same working indicator users see in the
+    macOS desktop app. Render a compact right-side status dot from the remote
+    session activity so working, attention, focused, sleeping, and idle states
+    remain visible after the mobile row was simplified to a single title line.
     */
     public GhostexRemoteSessionAdapter(@NonNull Context context,
                                        @NonNull List<GhostexDrawerItem> items) {
@@ -271,14 +277,17 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         GhostexRemoteSession session = item == null ? null : item.session;
         TextView title = (TextView) row.findViewWithTag("title");
         ImageView agentIcon = (ImageView) row.findViewWithTag("agentIcon");
+        TextView statusDot = (TextView) row.findViewWithTag("statusDot");
         if (session == null) return row;
 
         title.setText(session.title.isEmpty() ? "Ghostex Session" : session.title);
         agentIcon.setImageResource(GhostexSessionAgentIcon.drawableResForSession(session));
         agentIcon.setColorFilter(GhostexSessionAgentIcon.tintColorForSession(session));
+        statusDot.setTextColor(statusColor(session));
         row.setBackground(sessionBackground(parent.getContext(),
             isActiveSession(currentMachineId, activeSessionKey, session)));
         row.setContentDescription(GhostexAccessibilityCopy.join(title.getText().toString(),
+            statusDescription(session),
             "Tap to attach. Long press for actions."));
         return row;
     }
@@ -440,16 +449,36 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.END);
         row.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        TextView statusDot = new TextView(context);
+        statusDot.setTag("statusDot");
+        statusDot.setText("\u25CF");
+        statusDot.setTextSize(11);
+        statusDot.setGravity(Gravity.CENTER);
+        statusDot.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams dotParams =
+            new LinearLayout.LayoutParams(dp(context, 18), ViewGroup.LayoutParams.WRAP_CONTENT);
+        dotParams.setMarginStart(dp(context, 8));
+        row.addView(statusDot, dotParams);
         return row;
     }
 
     static int statusColor(@NonNull GhostexRemoteSession session) {
-        if (session.isFocused) return GhostexPalette.BUTTON;
         String status = session.displayStatus();
         if ("working".equals(status)) return GhostexPalette.STATUS_WORKING;
         if ("attention".equals(status)) return GhostexPalette.STATUS_ATTENTION;
         if ("sleep".equals(status) || "sleeping".equals(status)) return GhostexPalette.STATUS_SLEEPING;
+        if (session.isFocused) return GhostexPalette.BUTTON;
         return GhostexPalette.MUTED;
+    }
+
+    private static String statusDescription(@NonNull GhostexRemoteSession session) {
+        String status = session.displayStatus();
+        if ("working".equals(status)) return "Working.";
+        if ("attention".equals(status)) return "Needs attention.";
+        if ("sleep".equals(status) || "sleeping".equals(status)) return "Sleeping.";
+        if (session.isFocused) return "Focused.";
+        return "Idle.";
     }
 
     private int dp(@NonNull Context context, int value) {
