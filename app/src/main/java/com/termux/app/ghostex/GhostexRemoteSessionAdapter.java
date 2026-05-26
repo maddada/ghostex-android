@@ -138,6 +138,11 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
     macOS desktop app. Render a compact right-side status dot from the remote
     session activity so working, attention, focused, sleeping, and idle states
     remain visible after the mobile row was simplified to a single title line.
+
+    CDXC:AndroidSidebar 2026-05-26-10:14:
+    The status indicator is product state, not decorative text. Draw it as an
+    oval background instead of depending on a bullet glyph so bundled terminal
+    fonts or Android font fallback cannot make working/attention icons vanish.
     */
     public GhostexRemoteSessionAdapter(@NonNull Context context,
                                        @NonNull List<GhostexDrawerItem> items) {
@@ -283,7 +288,9 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         title.setText(session.title.isEmpty() ? "Ghostex Session" : session.title);
         agentIcon.setImageResource(GhostexSessionAgentIcon.drawableResForSession(session));
         agentIcon.setColorFilter(GhostexSessionAgentIcon.tintColorForSession(session));
-        statusDot.setTextColor(statusColor(session));
+        int statusColor = statusColor(session);
+        statusDot.setTextColor(statusColor);
+        statusDot.setBackground(statusDotBackground(parent.getContext(), statusColor));
         row.setBackground(sessionBackground(parent.getContext(),
             isActiveSession(currentMachineId, activeSessionKey, session)));
         row.setContentDescription(GhostexAccessibilityCopy.join(title.getText().toString(),
@@ -452,15 +459,22 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
 
         TextView statusDot = new TextView(context);
         statusDot.setTag("statusDot");
-        statusDot.setText("\u25CF");
-        statusDot.setTextSize(11);
+        statusDot.setText("");
+        statusDot.setTextSize(0);
         statusDot.setGravity(Gravity.CENTER);
         statusDot.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         LinearLayout.LayoutParams dotParams =
-            new LinearLayout.LayoutParams(dp(context, 18), ViewGroup.LayoutParams.WRAP_CONTENT);
-        dotParams.setMarginStart(dp(context, 8));
+            new LinearLayout.LayoutParams(dp(context, 8), dp(context, 8));
+        dotParams.setMarginStart(dp(context, 10));
         row.addView(statusDot, dotParams);
         return row;
+    }
+
+    private GradientDrawable statusDotBackground(@NonNull Context context, int color) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setShape(GradientDrawable.OVAL);
+        drawable.setColor(color);
+        return drawable;
     }
 
     static int statusColor(@NonNull GhostexRemoteSession session) {

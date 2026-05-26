@@ -64,6 +64,12 @@ public final class GhostexRemoteSession {
     The Mac inventory can expose `agentIcon` directly. Keep it alongside the
     human-readable agent label so Android session cards can render the same
     logo identity as the macOS sidebar without re-deriving icons in the adapter.
+
+    CDXC:AndroidSidebar 2026-05-26-10:14:
+    Android session rows must keep working and attention indicators visible even
+    when the Mac inventory sends `activity: idle` plus an actionable lifecycle
+    `status`. Prefer actionable status tokens over idle activity so mobile
+    mirrors the desktop sidebar instead of hiding active-session state.
     */
     public GhostexRemoteSession(String alias, String sessionId, String projectId, String title,
                                 String projectName, String projectPath, String activity,
@@ -117,8 +123,9 @@ public final class GhostexRemoteSession {
         if (alias.isEmpty()) alias = aliasFromSessionId(sessionId);
         String provider = normalizedToken(firstNonEmpty(trimmedJsonValue(json, "provider"), trimmedJsonValue(json, "sessionPersistenceProvider")));
         String providerSessionName = firstNonEmpty(trimmedJsonValue(json, "providerSessionName"), trimmedJsonValue(json, "sessionPersistenceName"));
-        String status = normalizedToken(firstNonEmpty(trimmedJsonValue(json, "status"), trimmedJsonValue(json, "lifecycleState")));
-        String activity = normalizedToken(trimmedJsonValue(json, "activity"));
+        String status = normalizedSessionState(firstNonEmpty(trimmedJsonValue(json, "status"), trimmedJsonValue(json, "lifecycleState")));
+        String activity = normalizedSessionState(firstNonEmpty(trimmedJsonValue(json, "activity"),
+            trimmedJsonValue(json, "activityState"), trimmedJsonValue(json, "activityStatus")));
         String groupId = trimmedJsonValue(json, "groupId");
         return new GhostexRemoteSession(
             alias,
@@ -152,8 +159,15 @@ public final class GhostexRemoteSession {
 
     public String displayStatus() {
         if (isSleeping) return "sleep";
-        if (!activity.isEmpty()) return activity;
-        return status.isEmpty() ? "idle" : status;
+        String activityState = normalizedSessionState(activity);
+        String statusState = normalizedSessionState(status);
+        if (isActionableStatus(activityState)) return activityState;
+        if (isActionableStatus(statusState)) return statusState;
+        if ("sleep".equals(activityState) || "sleeping".equals(activityState) ||
+            "sleep".equals(statusState) || "sleeping".equals(statusState)) return "sleep";
+        if (!activityState.isEmpty() && !"running".equals(activityState)) return activityState;
+        if (!statusState.isEmpty() && !"running".equals(statusState)) return statusState;
+        return "idle";
     }
 
     private static String firstNonEmpty(String... values) {
@@ -165,6 +179,19 @@ public final class GhostexRemoteSession {
 
     private static String normalizedToken(String value) {
         return value == null ? "" : value.trim().toLowerCase(Locale.US);
+    }
+
+    private static String normalizedSessionState(String value) {
+        String normalized = normalizedToken(value).replace('_', '-').replace(' ', '-');
+        if ("needs-attention".equals(normalized) || "attention-required".equals(normalized)) return "attention";
+        if ("active".equals(normalized) || "busy".equals(normalized) || "processing".equals(normalized)) return "working";
+        if ("sleeping".equals(normalized)) return "sleep";
+        return normalized;
+    }
+
+    private static boolean isActionableStatus(String value) {
+        return "attention".equals(value) || "working".equals(value) ||
+            "done".equals(value) || "error".equals(value);
     }
 
     private static String trimmedJsonValue(JSONObject json, String key) {

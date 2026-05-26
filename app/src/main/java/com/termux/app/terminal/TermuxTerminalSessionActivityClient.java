@@ -18,6 +18,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.termux.R;
+import com.termux.app.ghostex.GhostexTerminalTypeface;
 import com.termux.shared.interact.ShareUtils;
 import com.termux.shared.termux.shell.command.runner.terminal.TermuxSession;
 import com.termux.shared.termux.interact.TextInputDialogUtils;
@@ -523,7 +524,15 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
             }
             updateBackgroundColor();
 
-            final Typeface newTypeface = (fontFile.exists() && fontFile.length() > 0) ? Typeface.createFromFile(fontFile) : Typeface.MONOSPACE;
+            /*
+            CDXC:AndroidTerminalFont 2026-05-26-10:14:
+            Ghostex Android bundles JetBrains Mono Nerd Font and uses it as the
+            default terminal typeface so remote agent UIs can render Nerd Font
+            symbols consistently on phones. `~/.termux/font.ttf` remains an
+            intentional user override, not the only path to a proper terminal
+            font.
+            */
+            final Typeface newTypeface = GhostexTerminalTypeface.resolve(mActivity, fontFile);
             mActivity.getTerminalView().setTypeface(newTypeface);
         } catch (Exception e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Error in checkForFontAndColors()", e);

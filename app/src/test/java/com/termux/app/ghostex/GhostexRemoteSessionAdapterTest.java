@@ -51,6 +51,11 @@ public final class GhostexRemoteSessionAdapterTest {
     CDXC:AndroidSidebar 2026-05-23-14:40:
     Mobile session cards need a visible status dot so the Android app shows
     working state when the macOS desktop status indicator does.
+
+    CDXC:AndroidSidebar 2026-05-26-10:14:
+    Status indicators are circular views and actionable status beats idle
+    activity, so tests pin both the visible row affordance and the inventory
+    normalization that keeps working/attention state from disappearing.
     */
     @Test
     public void stateCardHasRecoveryContentDescription() {
@@ -191,9 +196,26 @@ public final class GhostexRemoteSessionAdapterTest {
         View view = adapter.getView(1, null, new FrameLayout(RuntimeEnvironment.getApplication()));
         TextView statusDot = view.findViewWithTag("statusDot");
 
-        Assert.assertEquals("\u25CF", statusDot.getText().toString());
+        Assert.assertEquals("", statusDot.getText().toString());
+        Assert.assertTrue(statusDot.getBackground() instanceof GradientDrawable);
         Assert.assertEquals(GhostexPalette.STATUS_WORKING, statusDot.getCurrentTextColor());
         Assert.assertTrue(view.getContentDescription().toString().contains("Working."));
+    }
+
+    @Test
+    public void actionableStatusOverridesIdleActivityForStatusDot() throws Exception {
+        JSONObject json = new JSONObject()
+            .put("alias", 5)
+            .put("sessionId", "session-5")
+            .put("title", "Needs input")
+            .put("activity", "idle")
+            .put("status", "attention")
+            .put("provider", "zmx");
+        GhostexRemoteSession session = GhostexRemoteSession.fromJson(json);
+
+        Assert.assertNotNull(session);
+        Assert.assertEquals("attention", session.displayStatus());
+        Assert.assertEquals(GhostexPalette.STATUS_ATTENTION, GhostexRemoteSessionAdapter.statusColor(session));
     }
 
     @Test

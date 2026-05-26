@@ -71,6 +71,7 @@ public final class GhostexAndroidController {
     private static final int GHOSTEX_MUTED = GhostexPalette.MUTED;
     private static final int GHOSTEX_ACCENT = GhostexPalette.BUTTON;
     private static final int GHOSTEX_DANGER = GhostexPalette.DANGER;
+    private static final long ZMX_SWITCH_REFRESH_DELAY_MS = 250L;
 
     private final TermuxActivity activity;
     private final GhostexMachineStore machineStore;
@@ -1516,6 +1517,7 @@ public final class GhostexAndroidController {
             sessionAdapter.setActiveSession(machine, remoteSession);
             activity.getTermuxTerminalSessionClient().setCurrentSession(warmSession);
             applyAutoScrollSettingToCurrentTerminal();
+            refreshZmxViewportOnceAfterSidebarSwitch(warmSession, remoteSession, "warm-session-reuse");
             activity.getDrawer().closeDrawers();
             return;
         }
@@ -1562,9 +1564,33 @@ public final class GhostexAndroidController {
         sessionAdapter.setActiveSession(machine, remoteSession);
         activity.getTermuxTerminalSessionClient().setCurrentSession(terminalSession);
         applyAutoScrollSettingToCurrentTerminal();
+        refreshZmxViewportOnceAfterSidebarSwitch(terminalSession, remoteSession, "new-ssh-attach");
         activity.getDrawer().closeDrawers();
         setStatus("Attached to " + remoteSession.alias + " on " + machine.displayLabel() + ". Logs: " +
             GhostexFileLogger.shareableLogPath(activity));
+    }
+
+    private void refreshZmxViewportOnceAfterSidebarSwitch(@NonNull TerminalSession terminalSession,
+                                                         @NonNull GhostexRemoteSession remoteSession,
+                                                         @NonNull String reason) {
+        if (!GhostexZmxViewportRefresh.shouldRefreshAfterSidebarSwitch(remoteSession, terminalSession)) {
+            return;
+        }
+        String sessionLogTag = zmxSessionLogTag(remoteSession);
+        GhostexFileLogger.log(activity, "attach", sessionLogTag,
+            "zmx viewport refresh scheduled reason=" + reason + " delayMs=" + ZMX_SWITCH_REFRESH_DELAY_MS);
+        mainHandler.postDelayed(() -> {
+            if (destroyed || activity.getCurrentSession() != terminalSession ||
+                !GhostexZmxViewportRefresh.shouldRefreshAfterSidebarSwitch(remoteSession, terminalSession)) {
+                GhostexFileLogger.log(activity, "attach", sessionLogTag,
+                    "zmx viewport refresh skipped reason=" + reason);
+                return;
+            }
+            activity.getTerminalView().updateSize();
+            terminalSession.write(GhostexZmxViewportRefresh.sequence());
+            GhostexFileLogger.log(activity, "attach", sessionLogTag,
+                "zmx viewport refresh sent reason=" + reason);
+        }, ZMX_SWITCH_REFRESH_DELAY_MS);
     }
 
     @NonNull
