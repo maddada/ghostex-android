@@ -11,9 +11,12 @@ import java.util.Set;
 
 public final class GhostexDrawerItem {
 
+    public static final int PROJECT_SESSION_LIST_COLLAPSED_COUNT = 6;
+
     public enum Type {
         STATE_CARD,
         PROJECT_HEADER,
+        PROJECT_SESSION_LIST_TOGGLE,
         SESSION
     }
 
@@ -31,6 +34,7 @@ public final class GhostexDrawerItem {
     public final int attentionCount;
     public final int sleepingCount;
     public final boolean collapsed;
+    public final boolean sessionListCollapsed;
     public final GhostexRemoteSession session;
 
     private GhostexDrawerItem(@NonNull Type type, @NonNull String stateTitle,
@@ -39,7 +43,7 @@ public final class GhostexDrawerItem {
                               @NonNull String projectId, @NonNull String groupId,
                               @NonNull String projectTitle, @NonNull String projectPath,
                               int sessionCount, int workingCount, int attentionCount,
-                              int sleepingCount, boolean collapsed,
+                              int sleepingCount, boolean collapsed, boolean sessionListCollapsed,
                               @Nullable GhostexRemoteSession session) {
         this.type = type;
         this.stateTitle = stateTitle;
@@ -55,6 +59,7 @@ public final class GhostexDrawerItem {
         this.attentionCount = attentionCount;
         this.sleepingCount = sleepingCount;
         this.collapsed = collapsed;
+        this.sessionListCollapsed = sessionListCollapsed;
         this.session = session;
     }
 
@@ -99,7 +104,7 @@ public final class GhostexDrawerItem {
     public static GhostexDrawerItem stateCard(@NonNull String title, @NonNull String body,
                                               @NonNull String actionHint) {
         return new GhostexDrawerItem(Type.STATE_CARD, title, body, actionHint,
-            "", "", "", "", "", 0, 0, 0, 0, false, null);
+            "", "", "", "", "", 0, 0, 0, 0, false, false, null);
     }
 
     public static List<GhostexDrawerItem> buildItems(@NonNull List<GhostexRemoteSession> sessions) {
@@ -108,6 +113,12 @@ public final class GhostexDrawerItem {
 
     public static List<GhostexDrawerItem> buildItems(@NonNull List<GhostexRemoteSession> sessions,
                                                      @NonNull Set<String> collapsedProjectKeys) {
+        return buildItems(sessions, collapsedProjectKeys, Collections.emptySet());
+    }
+
+    public static List<GhostexDrawerItem> buildItems(@NonNull List<GhostexRemoteSession> sessions,
+                                                     @NonNull Set<String> collapsedProjectKeys,
+                                                     @NonNull Set<String> collapsedProjectSessionListKeys) {
         LinkedHashMap<String, ArrayList<GhostexRemoteSession>> groups = new LinkedHashMap<>();
         for (GhostexRemoteSession session : sessions) {
             String key = groupKey(session);
@@ -143,12 +154,23 @@ public final class GhostexDrawerItem {
             boolean collapsed = collapsedProjectKeys.contains(group.key);
             items.add(new GhostexDrawerItem(Type.PROJECT_HEADER, "", "", "", group.key,
                 first.projectId, first.groupId, first.displayProjectName(), first.projectPath,
-                groupSessions.size(), working, attention, sleeping, collapsed, null));
+                groupSessions.size(), working, attention, sleeping, collapsed, false, null));
             if (collapsed) continue;
-            for (GhostexRemoteSession session : groupSessions) {
+            boolean sessionListCollapsed = collapsedProjectSessionListKeys.contains(group.key) &&
+                groupSessions.size() > PROJECT_SESSION_LIST_COLLAPSED_COUNT;
+            int visibleSessionCount = sessionListCollapsed
+                ? PROJECT_SESSION_LIST_COLLAPSED_COUNT
+                : groupSessions.size();
+            for (int index = 0; index < visibleSessionCount; index++) {
+                GhostexRemoteSession session = groupSessions.get(index);
                 items.add(new GhostexDrawerItem(Type.SESSION, "", "", "", group.key,
                     first.projectId, first.groupId, first.displayProjectName(), first.projectPath,
-                    0, 0, 0, 0, false, session));
+                    0, 0, 0, 0, false, false, session));
+            }
+            if (groupSessions.size() > PROJECT_SESSION_LIST_COLLAPSED_COUNT) {
+                items.add(new GhostexDrawerItem(Type.PROJECT_SESSION_LIST_TOGGLE, "", "", "", group.key,
+                    first.projectId, first.groupId, first.displayProjectName(), first.projectPath,
+                    groupSessions.size(), 0, 0, 0, false, sessionListCollapsed, null));
             }
         }
         return items;

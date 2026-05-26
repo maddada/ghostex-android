@@ -10,6 +10,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -21,6 +22,8 @@ public final class GhostexMachineStore {
     private static final String KEY_MACHINES = "machines_json";
     private static final String KEY_LAST_MACHINE_ID = "last_machine_id";
     private static final String KEY_TUTORIAL_SEEN = "tutorial_seen";
+    private static final String KEY_COLLAPSED_PROJECT_KEYS_PREFIX = "collapsed_project_keys_";
+    private static final String KEY_COLLAPSED_PROJECT_SESSION_LIST_KEYS_PREFIX = "collapsed_project_session_list_keys_";
 
     private final SharedPreferences preferences;
 
@@ -129,9 +132,11 @@ public final class GhostexMachineStore {
             if (!machine.id.equals(machineId)) next.add(machine);
         }
         writeMachines(next);
-        if (machineId.equals(getLastMachineId())) {
-            preferences.edit().remove(KEY_LAST_MACHINE_ID).apply();
-        }
+        SharedPreferences.Editor editor = preferences.edit()
+            .remove(collapsedProjectKeysPreferenceKey(machineId))
+            .remove(collapsedProjectSessionListKeysPreferenceKey(machineId));
+        if (machineId.equals(getLastMachineId())) editor.remove(KEY_LAST_MACHINE_ID);
+        editor.apply();
     }
 
     @Nullable
@@ -169,6 +174,28 @@ public final class GhostexMachineStore {
 
     public void setTutorialSeen(boolean value) {
         preferences.edit().putBoolean(KEY_TUTORIAL_SEEN, value).apply();
+    }
+
+    @NonNull
+    public HashSet<String> getCollapsedProjectKeys(@NonNull String machineId) {
+        return persistedStringSet(collapsedProjectKeysPreferenceKey(machineId));
+    }
+
+    public void setCollapsedProjectKeys(@NonNull String machineId, @NonNull Set<String> projectKeys) {
+        preferences.edit()
+            .putStringSet(collapsedProjectKeysPreferenceKey(machineId), sanitizedStringSet(projectKeys))
+            .apply();
+    }
+
+    @NonNull
+    public HashSet<String> getCollapsedProjectSessionListKeys(@NonNull String machineId) {
+        return persistedStringSet(collapsedProjectSessionListKeysPreferenceKey(machineId));
+    }
+
+    public void setCollapsedProjectSessionListKeys(@NonNull String machineId, @NonNull Set<String> projectKeys) {
+        preferences.edit()
+            .putStringSet(collapsedProjectSessionListKeysPreferenceKey(machineId), sanitizedStringSet(projectKeys))
+            .apply();
     }
 
     private void writeMachines(@NonNull List<GhostexMachine> machines) {
@@ -216,6 +243,31 @@ public final class GhostexMachineStore {
 
     private String normalizeHostForDuplicateCheck(@NonNull String host) {
         return host.trim().toLowerCase(Locale.US);
+    }
+
+    @NonNull
+    private HashSet<String> persistedStringSet(@NonNull String key) {
+        Set<String> values = preferences.getStringSet(key, Collections.emptySet());
+        return sanitizedStringSet(values == null ? Collections.emptySet() : values);
+    }
+
+    @NonNull
+    private HashSet<String> sanitizedStringSet(@NonNull Set<String> values) {
+        HashSet<String> sanitized = new HashSet<>();
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) sanitized.add(value.trim());
+        }
+        return sanitized;
+    }
+
+    @NonNull
+    private String collapsedProjectKeysPreferenceKey(@NonNull String machineId) {
+        return KEY_COLLAPSED_PROJECT_KEYS_PREFIX + machineId;
+    }
+
+    @NonNull
+    private String collapsedProjectSessionListKeysPreferenceKey(@NonNull String machineId) {
+        return KEY_COLLAPSED_PROJECT_SESSION_LIST_KEYS_PREFIX + machineId;
     }
 
     private String sshTargetKey(@NonNull String host, @NonNull String username, int port) {

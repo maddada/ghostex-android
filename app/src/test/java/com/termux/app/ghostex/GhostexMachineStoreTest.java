@@ -212,4 +212,22 @@ public final class GhostexMachineStoreTest {
         Assert.assertFalse(rewritten.contains("mac-a-copy"));
     }
 
+    @Test
+    public void persistsDrawerDisclosureStatePerMachine() {
+        java.util.HashSet<String> collapsedProjects = new java.util.HashSet<>();
+        collapsedProjects.add("id:project-a");
+        java.util.HashSet<String> collapsedLists = new java.util.HashSet<>();
+        collapsedLists.add("path:/Users/madda/dev/_active/zmux");
+
+        store.setCollapsedProjectKeys("mac-a", collapsedProjects);
+        store.setCollapsedProjectSessionListKeys("mac-a", collapsedLists);
+
+        GhostexMachineStore restored = new GhostexMachineStore(context);
+        Assert.assertTrue(restored.getCollapsedProjectKeys("mac-a").contains("id:project-a"));
+        Assert.assertTrue(restored.getCollapsedProjectSessionListKeys("mac-a")
+            .contains("path:/Users/madda/dev/_active/zmux"));
+        Assert.assertTrue(restored.getCollapsedProjectKeys("mac-b").isEmpty());
+        Assert.assertTrue(restored.getCollapsedProjectSessionListKeys("mac-b").isEmpty());
+    }
+
 }

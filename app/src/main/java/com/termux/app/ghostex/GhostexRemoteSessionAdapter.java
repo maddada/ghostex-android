@@ -25,11 +25,13 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
     private static final int VIEW_TYPE_PROJECT_HEADER = 0;
     private static final int VIEW_TYPE_SESSION = 1;
     private static final int VIEW_TYPE_STATE_CARD = 2;
+    private static final int VIEW_TYPE_PROJECT_SESSION_LIST_TOGGLE = 3;
     private String currentMachineId;
     private String activeSessionKey;
     private OnProjectSessionCreateListener projectSessionCreateListener;
     private OnProjectActionsListener projectActionsListener;
     private OnProjectToggleListener projectToggleListener;
+    private OnProjectSessionListToggleListener projectSessionListToggleListener;
 
     public interface OnProjectSessionCreateListener {
         void onCreateProjectSession(@NonNull GhostexDrawerItem item);
@@ -41,6 +43,10 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
 
     public interface OnProjectToggleListener {
         void onToggleProject(@NonNull GhostexDrawerItem item);
+    }
+
+    public interface OnProjectSessionListToggleListener {
+        void onToggleProjectSessionList(@NonNull GhostexDrawerItem item);
     }
 
     /*
@@ -161,6 +167,10 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         projectToggleListener = listener;
     }
 
+    public void setOnProjectSessionListToggleListener(@Nullable OnProjectSessionListToggleListener listener) {
+        projectSessionListToggleListener = listener;
+    }
+
     public void setCurrentMachineId(@Nullable String value) {
         currentMachineId = value;
         notifyDataSetChanged();
@@ -195,13 +205,16 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
 
     @Override
     public int getViewTypeCount() {
-        return 3;
+        return 4;
     }
 
     @Override
     public int getItemViewType(int position) {
         GhostexDrawerItem item = getItem(position);
         if (item != null && item.type == GhostexDrawerItem.Type.STATE_CARD) return VIEW_TYPE_STATE_CARD;
+        if (item != null && item.type == GhostexDrawerItem.Type.PROJECT_SESSION_LIST_TOGGLE) {
+            return VIEW_TYPE_PROJECT_SESSION_LIST_TOGGLE;
+        }
         return item != null && item.type == GhostexDrawerItem.Type.PROJECT_HEADER
             ? VIEW_TYPE_PROJECT_HEADER
             : VIEW_TYPE_SESSION;
@@ -222,6 +235,9 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         if (item != null && item.type == GhostexDrawerItem.Type.PROJECT_HEADER) {
             return getProjectHeaderView(item, convertView, parent);
         }
+        if (item != null && item.type == GhostexDrawerItem.Type.PROJECT_SESSION_LIST_TOGGLE) {
+            return getProjectSessionListToggleView(item, convertView, parent);
+        }
         return getSessionView(item, convertView, parent);
     }
 
@@ -239,6 +255,22 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         action.setVisibility(item.stateActionHint.isEmpty() ? View.GONE : View.VISIBLE);
         row.setContentDescription(GhostexAccessibilityCopy.join(item.stateTitle, item.stateBody,
             item.stateActionHint.isEmpty() ? "Tap for recovery actions." : item.stateActionHint));
+        return row;
+    }
+
+    private View getProjectSessionListToggleView(@NonNull GhostexDrawerItem item, View convertView,
+                                                 @NonNull ViewGroup parent) {
+        TextView row = convertView instanceof TextView && "projectSessionListToggle".equals(convertView.getTag())
+            ? (TextView) convertView
+            : createProjectSessionListToggle(parent);
+        String label = item.sessionListCollapsed ? "Show more" : "Show less";
+        row.setText(label);
+        row.setContentDescription(label + " sessions in " + item.projectTitle);
+        row.setOnClickListener(view -> {
+            if (projectSessionListToggleListener != null) {
+                projectSessionListToggleListener.onToggleProjectSessionList(item);
+            }
+        });
         return row;
     }
 
@@ -283,19 +315,44 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         TextView title = (TextView) row.findViewWithTag("title");
         ImageView agentIcon = (ImageView) row.findViewWithTag("agentIcon");
         TextView statusDot = (TextView) row.findViewWithTag("statusDot");
+        ImageView sleepingIcon = (ImageView) row.findViewWithTag("sleepingIcon");
         if (session == null) return row;
 
         title.setText(session.title.isEmpty() ? "Ghostex Session" : session.title);
         agentIcon.setImageResource(GhostexSessionAgentIcon.drawableResForSession(session));
         agentIcon.setColorFilter(GhostexSessionAgentIcon.tintColorForSession(session));
         int statusColor = statusColor(session);
-        statusDot.setTextColor(statusColor);
-        statusDot.setBackground(statusDotBackground(parent.getContext(), statusColor));
+        if (showsSleepingIcon(session)) {
+            statusDot.setVisibility(View.GONE);
+            sleepingIcon.setVisibility(View.VISIBLE);
+            sleepingIcon.setColorFilter(statusColor);
+        } else {
+            sleepingIcon.setVisibility(View.GONE);
+            statusDot.setVisibility(View.VISIBLE);
+            statusDot.setTextColor(statusColor);
+            statusDot.setBackground(statusDotBackground(parent.getContext(), statusColor));
+        }
         row.setBackground(sessionBackground(parent.getContext(),
             isActiveSession(currentMachineId, activeSessionKey, session)));
         row.setContentDescription(GhostexAccessibilityCopy.join(title.getText().toString(),
             statusDescription(session),
             "Tap to attach. Long press for actions."));
+        return row;
+    }
+
+    private TextView createProjectSessionListToggle(@NonNull ViewGroup parent) {
+        Context context = parent.getContext();
+        TextView row = new TextView(context);
+        row.setTag("projectSessionListToggle");
+        row.setTextColor(GhostexPalette.MUTED);
+        row.setTextSize(13);
+        row.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+        row.setSingleLine(true);
+        row.setEllipsize(TextUtils.TruncateAt.END);
+        row.setPadding(dp(context, 12), dp(context, 8), dp(context, 12), dp(context, 8));
+        row.setMinHeight(dp(context, 36));
+        row.setClickable(true);
+        row.setFocusable(true);
         return row;
     }
 
@@ -467,6 +524,17 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
             new LinearLayout.LayoutParams(dp(context, 8), dp(context, 8));
         dotParams.setMarginStart(dp(context, 10));
         row.addView(statusDot, dotParams);
+
+        ImageView sleepingIcon = new ImageView(context);
+        sleepingIcon.setTag("sleepingIcon");
+        sleepingIcon.setImageResource(R.drawable.ic_ghostex_sleep);
+        sleepingIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        sleepingIcon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        sleepingIcon.setVisibility(View.GONE);
+        LinearLayout.LayoutParams sleepParams =
+            new LinearLayout.LayoutParams(dp(context, 16), dp(context, 16));
+        sleepParams.setMarginStart(dp(context, 10));
+        row.addView(sleepingIcon, sleepParams);
         return row;
     }
 
@@ -484,6 +552,11 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         if ("sleep".equals(status) || "sleeping".equals(status)) return GhostexPalette.STATUS_SLEEPING;
         if (session.isFocused) return GhostexPalette.BUTTON;
         return GhostexPalette.MUTED;
+    }
+
+    static boolean showsSleepingIcon(@NonNull GhostexRemoteSession session) {
+        String status = session.displayStatus();
+        return "sleep".equals(status) || "sleeping".equals(status);
     }
 
     private static String statusDescription(@NonNull GhostexRemoteSession session) {

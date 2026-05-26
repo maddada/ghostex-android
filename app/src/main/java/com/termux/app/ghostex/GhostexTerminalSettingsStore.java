@@ -58,6 +58,9 @@ public final class GhostexTerminalSettingsStore {
         /*
         CDXC:AndroidNotifications 2026-05-21-08:52:
         Users should be able to choose whether Android plays an audible cue when a remote session enters Done/attention. Default to enabled so the new Done notification behavior is active unless the user opts out in Settings.
+
+        CDXC:AndroidNotifications 2026-05-26-14:42:
+        Attention is now the primary audible state requested for Android session monitoring. Keep the existing preference key so upgrades preserve the user's sound opt-in or opt-out.
         */
         return ghostexPreferences.getBoolean(KEY_DONE_NOTIFICATION_SOUND_ENABLED, true);
     }

@@ -89,6 +89,18 @@ public final class GhostexServiceNotificationFormatter {
     }
 
     public static boolean isDone(@NonNull GhostexRemoteSession session) {
+        return shouldPlayStatusSound(session);
+    }
+
+    public static boolean isAttention(@NonNull GhostexRemoteSession session) {
+        return "attention".equals(session.displayStatus());
+    }
+
+    public static boolean shouldPlayStatusSound(@NonNull GhostexRemoteSession session) {
+        /*
+        CDXC:AndroidNotifications 2026-05-26-14:42:
+        A remote session entering attention must be audible on Android, matching the urgency of the notification row. Keep Done in the same sound bucket so the existing completion-notification setting continues to cover both actionable terminal states.
+        */
         String status = session.displayStatus();
         return "attention".equals(status) || "done".equals(status);
     }

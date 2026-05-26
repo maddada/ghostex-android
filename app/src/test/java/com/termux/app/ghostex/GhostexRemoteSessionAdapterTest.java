@@ -188,6 +188,7 @@ public final class GhostexRemoteSessionAdapterTest {
         Assert.assertNotNull(view.findViewWithTag("title"));
         Assert.assertNotNull(view.findViewWithTag("agentIcon"));
         Assert.assertNotNull(view.findViewWithTag("statusDot"));
+        Assert.assertNotNull(view.findViewWithTag("sleepingIcon"));
     }
 
     @Test
@@ -200,6 +201,52 @@ public final class GhostexRemoteSessionAdapterTest {
         Assert.assertTrue(statusDot.getBackground() instanceof GradientDrawable);
         Assert.assertEquals(GhostexPalette.STATUS_WORKING, statusDot.getCurrentTextColor());
         Assert.assertTrue(view.getContentDescription().toString().contains("Working."));
+    }
+
+    @Test
+    public void sleepingSessionRowShowsSleepIconOnRight() {
+        ArrayList<GhostexRemoteSession> sessions = new ArrayList<>();
+        sessions.add(new GhostexRemoteSession("1", "session-1", "project-1", "Sleeping",
+            "Ghostex", "/Users/madda/dev/_active/zmux", "idle", "sleep", "zmx",
+            "zmx-main", "codex", "2026-05-17T10:00:00Z", false, true));
+        GhostexRemoteSessionAdapter adapter = new GhostexRemoteSessionAdapter(
+            RuntimeEnvironment.getApplication(), GhostexDrawerItem.buildItems(sessions));
+
+        View view = adapter.getView(1, null, new FrameLayout(RuntimeEnvironment.getApplication()));
+        TextView statusDot = view.findViewWithTag("statusDot");
+        View sleepingIcon = view.findViewWithTag("sleepingIcon");
+
+        Assert.assertTrue(GhostexRemoteSessionAdapter.showsSleepingIcon(sessions.get(0)));
+        Assert.assertEquals(View.GONE, statusDot.getVisibility());
+        Assert.assertEquals(View.VISIBLE, sleepingIcon.getVisibility());
+        Assert.assertTrue(view.getContentDescription().toString().contains("Sleeping."));
+    }
+
+    @Test
+    public void projectSessionListToggleUsesShowMoreShowLessLabels() {
+        ArrayList<GhostexRemoteSession> sessions = new ArrayList<>();
+        for (int index = 0; index < 8; index++) {
+            sessions.add(new GhostexRemoteSession(String.valueOf(index), "session-" + index,
+                "project-1", "Session " + index, "Ghostex", "/Users/madda/dev/_active/zmux",
+                "idle", "running", "zmx", "zmx-main", "codex",
+                "2026-05-17T10:0" + index + ":00Z", false, false));
+        }
+        GhostexRemoteSessionAdapter expandedAdapter = new GhostexRemoteSessionAdapter(
+            RuntimeEnvironment.getApplication(), GhostexDrawerItem.buildItems(sessions));
+
+        TextView expandedToggle = (TextView) expandedAdapter.getView(9, null,
+            new FrameLayout(RuntimeEnvironment.getApplication()));
+        Assert.assertEquals("Show less", expandedToggle.getText().toString());
+
+        java.util.HashSet<String> collapsedLists = new java.util.HashSet<>();
+        collapsedLists.add("id:project-1");
+        GhostexRemoteSessionAdapter collapsedAdapter = new GhostexRemoteSessionAdapter(
+            RuntimeEnvironment.getApplication(), GhostexDrawerItem.buildItems(sessions,
+                java.util.Collections.emptySet(), collapsedLists));
+
+        TextView collapsedToggle = (TextView) collapsedAdapter.getView(7, null,
+            new FrameLayout(RuntimeEnvironment.getApplication()));
+        Assert.assertEquals("Show more", collapsedToggle.getText().toString());
     }
 
     @Test

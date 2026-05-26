@@ -74,6 +74,20 @@ public final class GhostexServiceNotificationFormatterTest {
         Assert.assertEquals(2, running.count);
     }
 
+    @Test
+    public void treatsAttentionAsAudibleNotificationState() {
+        /*
+        CDXC:AndroidNotifications 2026-05-26-14:42:
+        Android must play the status sound when a known remote session moves into attention, not only when it reaches Done.
+        */
+        Assert.assertTrue(GhostexServiceNotificationFormatter.shouldPlayStatusSound(
+            session("attention", "attention", "running", "2026-05-26T10:42:00Z")));
+        Assert.assertTrue(GhostexServiceNotificationFormatter.shouldPlayStatusSound(
+            session("done", "done", "exited", "2026-05-26T10:43:00Z")));
+        Assert.assertFalse(GhostexServiceNotificationFormatter.shouldPlayStatusSound(
+            session("working", "working", "running", "2026-05-26T10:44:00Z")));
+    }
+
     private GhostexRemoteSession session(String alias, String activity, String status, String lastInteractionAt) {
         return new GhostexRemoteSession(alias, "session-" + alias, "project-1", "Session " + alias,
             "Ghostex", "/Users/madda/dev/_active/zmux", activity, status, "zmx",

@@ -62,7 +62,7 @@ public final class GhostexAndroidController {
     private static final String LOG_TAG = "GhostexAndroid";
     private static final int WARM_SESSION_LIMIT = 7;
     private static final long RESUME_RECONNECT_THROTTLE_MS = 15_000L;
-    private static final long DRAWER_SESSION_POLL_MS = 4_000L;
+    private static final long SESSION_STATUS_POLL_MS = GhostexSessionStatusPollPolicy.MAX_STATUS_DELAY_MS;
     private static final int GHOSTEX_BG = GhostexPalette.BACKGROUND;
     private static final int GHOSTEX_PANEL = GhostexPalette.CARD;
     private static final int GHOSTEX_PANEL_ALT = GhostexPalette.INPUT_BACKGROUND;
@@ -81,10 +81,11 @@ public final class GhostexAndroidController {
     private final GhostexTerminalSettingsStore terminalSettingsStore;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final Runnable drawerSessionPollRunnable = this::runDrawerSessionPoll;
+    private final Runnable sessionStatusPollRunnable = this::runSessionStatusPoll;
     private final ArrayList<GhostexRemoteSession> remoteSessions = new ArrayList<>();
     private final ArrayList<GhostexDrawerItem> drawerItems = new ArrayList<>();
     private final HashSet<String> collapsedProjectKeys = new HashSet<>();
+    private final HashSet<String> collapsedProjectSessionListKeys = new HashSet<>();
     private final LinkedHashMap<String, TerminalSession> warmSessions =
         new LinkedHashMap<>(WARM_SESSION_LIMIT + 1, 0.75f, true);
     private final HashMap<String, String> sessionPasswords = new HashMap<>();
@@ -102,10 +103,10 @@ public final class GhostexAndroidController {
     private DrawerLayout.DrawerListener drawerSessionPollListener;
     private boolean tutorialShowing;
     private boolean requiredMachineSetupInProgress;
-    private boolean drawerSessionPollInFlight;
+    private boolean sessionStatusPollInFlight;
     private long lastReconnectAttemptAt;
     private long reconnectGeneration;
-    private long drawerSessionPollGeneration;
+    private long sessionStatusPollGeneration;
     private long machineCheckGeneration;
     private long remoteActionGeneration;
     private long attachGeneration;
@@ -445,9 +446,9 @@ public final class GhostexAndroidController {
         machineCheckGeneration++;
         remoteActionGeneration++;
         attachGeneration++;
-        drawerSessionPollGeneration++;
+        sessionStatusPollGeneration++;
         sessionPasswords.clear();
-        stopDrawerSessionPolling();
+        stopSessionStatusPolling();
         releaseDoneNotificationSoundPool();
         if (drawerSessionPollListener != null) {
             activity.getDrawer().removeDrawerListener(drawerSessionPollListener);
@@ -479,9 +480,13 @@ public final class GhostexAndroidController {
         if (isCurrentWarmRemoteAttachSession()) {
             GhostexFileLogger.log(activity, "connection", null,
                 "skipping resume reconnect because current terminal is a warm Ghostex attach");
+            scheduleSessionStatusPolling();
             return;
         }
-        if (machineStore.getLastMachine() == null) return;
+        if (machineStore.getLastMachine() == null) {
+            stopSessionStatusPolling();
+            return;
+        }
         long now = System.currentTimeMillis();
         if (now - lastReconnectAttemptAt < RESUME_RECONNECT_THROTTLE_MS) return;
         reconnectLastMachine(true);
@@ -592,6 +597,7 @@ public final class GhostexAndroidController {
         sessionAdapter.setOnProjectActionsListener(item ->
             showProjectContextMenu(item, machineStore.getLastMachine()));
         sessionAdapter.setOnProjectToggleListener(this::toggleProjectCollapsed);
+        sessionAdapter.setOnProjectSessionListToggleListener(this::toggleProjectSessionListCollapsed);
         sessionsList.setAdapter(sessionAdapter);
         sessionsList.setOnItemClickListener((parent, view, position, id) -> {
             GhostexDrawerItem item = sessionAdapter.getItem(position);
@@ -661,7 +667,6 @@ public final class GhostexAndroidController {
     }
 
     private void showMachinesPage() {
-        stopDrawerSessionPolling();
         rebuildMachinesPage();
         if (sessionsPage != null) sessionsPage.setVisibility(View.GONE);
         if (settingsPage != null) settingsPage.setVisibility(View.GONE);
@@ -669,7 +674,6 @@ public final class GhostexAndroidController {
     }
 
     private void showSettingsPage() {
-        stopDrawerSessionPolling();
         rebuildSettingsPage();
         if (sessionsPage != null) sessionsPage.setVisibility(View.GONE);
         if (machinesPage != null) machinesPage.setVisibility(View.GONE);
@@ -681,8 +685,8 @@ public final class GhostexAndroidController {
         if (settingsPage != null) settingsPage.setVisibility(View.GONE);
         if (sessionsPage != null) sessionsPage.setVisibility(View.VISIBLE);
         if (activity.getDrawer().isDrawerOpen(Gravity.LEFT)) {
-            refreshSessionInventoryFromDrawerPoll();
-            scheduleDrawerSessionPolling();
+            refreshSessionInventoryFromSessionStatusPoll();
+            scheduleSessionStatusPolling();
         }
     }
 
@@ -692,73 +696,66 @@ public final class GhostexAndroidController {
             @Override
             public void onDrawerOpened(@NonNull View drawerView) {
                 if (drawerView.getId() != R.id.left_drawer) return;
-                if (!shouldPollDrawerSessions()) return;
-                refreshSessionInventoryFromDrawerPoll();
-                scheduleDrawerSessionPolling();
-            }
-
-            @Override
-            public void onDrawerClosed(@NonNull View drawerView) {
-                if (drawerView.getId() != R.id.left_drawer) return;
-                stopDrawerSessionPolling();
+                if (!shouldPollSessionStatus()) return;
+                refreshSessionInventoryFromSessionStatusPoll();
+                scheduleSessionStatusPolling();
             }
         };
         drawer.addDrawerListener(drawerSessionPollListener);
         if (drawer.isDrawerOpen(Gravity.LEFT)) {
-            refreshSessionInventoryFromDrawerPoll();
-            scheduleDrawerSessionPolling();
+            refreshSessionInventoryFromSessionStatusPoll();
+            scheduleSessionStatusPolling();
         }
     }
 
-    private void runDrawerSessionPoll() {
-        if (!shouldPollDrawerSessions()) return;
-        refreshSessionInventoryFromDrawerPoll();
-        scheduleDrawerSessionPolling();
+    private void runSessionStatusPoll() {
+        if (!shouldPollSessionStatus()) return;
+        refreshSessionInventoryFromSessionStatusPoll();
+        scheduleSessionStatusPolling();
     }
 
-    private void scheduleDrawerSessionPolling() {
-        mainHandler.removeCallbacks(drawerSessionPollRunnable);
-        if (shouldPollDrawerSessions()) {
-            mainHandler.postDelayed(drawerSessionPollRunnable, DRAWER_SESSION_POLL_MS);
+    private void scheduleSessionStatusPolling() {
+        mainHandler.removeCallbacks(sessionStatusPollRunnable);
+        if (shouldPollSessionStatus()) {
+            mainHandler.postDelayed(sessionStatusPollRunnable, SESSION_STATUS_POLL_MS);
         }
     }
 
-    private void stopDrawerSessionPolling() {
-        mainHandler.removeCallbacks(drawerSessionPollRunnable);
+    private void stopSessionStatusPolling() {
+        mainHandler.removeCallbacks(sessionStatusPollRunnable);
     }
 
-    private boolean shouldPollDrawerSessions() {
-        return !destroyed &&
-            sessionsPage != null &&
-            sessionAdapter != null &&
-            sessionsPage.getVisibility() == View.VISIBLE &&
-            activity.getDrawer().isDrawerOpen(Gravity.LEFT) &&
-            machineStore.hasSeenTutorial() &&
-            machineStore.getLastMachine() != null;
+    private boolean shouldPollSessionStatus() {
+        /*
+        CDXC:AndroidNotifications 2026-05-26-14:42:
+        Notification shade rows must stay fresh even when the Ghostex sidebar is closed or showing Settings/Machines. Poll the selected Mac inventory from the Activity controller every five seconds at most, then publish it into the foreground service notification; drawer rendering is only one consumer of the same inventory.
+        */
+        return GhostexSessionStatusPollPolicy.shouldPoll(
+            destroyed, machineStore.hasSeenTutorial(), machineStore.getLastMachine() != null);
     }
 
-    private void refreshSessionInventoryFromDrawerPoll() {
-        if (!shouldPollDrawerSessions() || drawerSessionPollInFlight) return;
+    private void refreshSessionInventoryFromSessionStatusPoll() {
+        if (!shouldPollSessionStatus() || sessionStatusPollInFlight) return;
         GhostexMachine machine = machineStore.getLastMachine();
         if (machine == null) return;
-        drawerSessionPollInFlight = true;
-        long requestGeneration = ++drawerSessionPollGeneration;
+        sessionStatusPollInFlight = true;
+        long requestGeneration = ++sessionStatusPollGeneration;
         String requestMachineId = machine.id;
         executor.execute(() -> {
             String password = readPassword(machine);
             GhostexSessionInventoryClient.Result result = inventoryClient.fetchSessions(machine, password);
             mainHandler.post(() -> {
-                drawerSessionPollInFlight = false;
-                if (isCurrentDrawerSessionPoll(requestGeneration, requestMachineId)) {
-                    handleDrawerPollInventoryResult(machine, result);
+                sessionStatusPollInFlight = false;
+                if (isCurrentSessionStatusPoll(requestGeneration, requestMachineId)) {
+                    handleSessionStatusPollInventoryResult(machine, result);
                 }
             });
         });
     }
 
-    private boolean isCurrentDrawerSessionPoll(long requestGeneration, @NonNull String requestMachineId) {
-        return shouldPollDrawerSessions() &&
-            requestGeneration == drawerSessionPollGeneration &&
+    private boolean isCurrentSessionStatusPoll(long requestGeneration, @NonNull String requestMachineId) {
+        return shouldPollSessionStatus() &&
+            requestGeneration == sessionStatusPollGeneration &&
             requestMachineId.equals(machineStore.getLastMachineId());
     }
 
@@ -843,10 +840,10 @@ public final class GhostexAndroidController {
                 applyFloatingTerminalControlSettings();
                 setSettingsStatus(checked ? "Keyboard button is visible." : "Keyboard button is hidden.");
             }));
-        behaviorCard.addView(settingCheckBox("Done notification sound", "Play a sound when a remote session changes to Done or attention.",
+        behaviorCard.addView(settingCheckBox("Attention notification sound", "Play a sound when a remote session changes to attention or Done.",
             terminalSettingsStore.isDoneNotificationSoundEnabled(), checked -> {
                 terminalSettingsStore.setDoneNotificationSoundEnabled(checked);
-                setSettingsStatus(checked ? "Done notification sound is on." : "Done notification sound is off.");
+                setSettingsStatus(checked ? "Attention notification sound is on." : "Attention notification sound is off.");
             }));
         behaviorCard.addView(settingCheckBox("Fullscreen", "Use Termux's fullscreen terminal mode.",
             terminalSettingsStore.isFullscreenEnabled(), checked ->
@@ -1164,6 +1161,10 @@ public final class GhostexAndroidController {
             reconnectGeneration++;
             remoteActionGeneration++;
             attachGeneration++;
+            sessionStatusPollGeneration++;
+            stopSessionStatusPolling();
+            collapsedProjectKeys.clear();
+            collapsedProjectSessionListKeys.clear();
             sessionAdapter.setCurrentMachineId(null);
             if (!fromStartup) showMachineEditor(null);
             setStatus("Add your Mac or remote workstation to start.");
@@ -1171,13 +1172,15 @@ public final class GhostexAndroidController {
             activity.getDrawer().openDrawer(Gravity.LEFT);
             return;
         }
-        drawerSessionPollGeneration++;
+        sessionStatusPollGeneration++;
+        scheduleSessionStatusPolling();
         long requestGeneration = ++reconnectGeneration;
         remoteActionGeneration++;
         attachGeneration++;
         String requestMachineId = machine.id;
         lastReconnectAttemptAt = System.currentTimeMillis();
         machineStore.setLastMachineId(machine.id);
+        loadDrawerDisclosureState(machine);
         sessionAdapter.setCurrentMachineId(machine.id);
         boolean keepVisibleList = preserveDrawerList && hasVisibleSessionList();
         if (keepVisibleList) {
@@ -1307,14 +1310,14 @@ public final class GhostexAndroidController {
         activity.getDrawer().openDrawer(Gravity.LEFT);
     }
 
-    private void handleDrawerPollInventoryResult(@NonNull GhostexMachine machine,
-                                                 @NonNull GhostexSessionInventoryClient.Result result) {
+    private void handleSessionStatusPollInventoryResult(@NonNull GhostexMachine machine,
+                                                        @NonNull GhostexSessionInventoryClient.Result result) {
         if (!result.ok) {
             String message = result.errorMessage == null ? "Could not refresh sessions." : result.errorMessage;
-            setStatus("Session refresh failed: " + message);
+            if (isSessionDrawerVisible()) setStatus("Session refresh failed: " + message);
             return;
         }
-        applyInventorySessions(machine, result.sessions, null, hasVisibleSessionList());
+        applyInventorySessions(machine, result.sessions, null, isSessionDrawerVisible() && hasVisibleSessionList());
     }
 
     private void applyInventorySessions(@NonNull GhostexMachine machine,
@@ -1331,13 +1334,16 @@ public final class GhostexAndroidController {
         /*
         CDXC:AndroidNotifications 2026-05-21-08:52:
         Android should play one notification sound when an already-known remote session changes into Done/attention. Compare the previous inventory before replacing it so polling and reconnect refreshes notify on transitions without repeating sounds for sessions that were already done.
+
+        CDXC:AndroidNotifications 2026-05-26-14:42:
+        Attention is the urgent Android notification state, so the same inventory refresh that updates the foreground-service rows must also trigger the sound transition when a session first enters attention while the sidebar is closed.
         */
-        HashMap<String, Boolean> previousDoneBySessionId = doneStateBySessionId(remoteSessions);
-        boolean shouldPlayDoneSound = hasNewDoneSessionTransition(previousDoneBySessionId, sessions);
+        HashMap<String, Boolean> previousSoundStateBySessionId = soundStateBySessionId(remoteSessions);
+        boolean shouldPlayStatusSound = hasNewStatusSoundTransition(previousSoundStateBySessionId, sessions);
         remoteSessions.clear();
         remoteSessions.addAll(sessions);
         publishNotificationSessions();
-        if (shouldPlayDoneSound) playDoneNotificationSound();
+        if (shouldPlayStatusSound) playDoneNotificationSound();
         consumePendingNotificationSession();
         sessionAdapter.setCurrentMachineId(machine.id);
         if (sessions.isEmpty()) {
@@ -1396,20 +1402,20 @@ public final class GhostexAndroidController {
     }
 
     @NonNull
-    private HashMap<String, Boolean> doneStateBySessionId(@NonNull List<GhostexRemoteSession> sessions) {
-        HashMap<String, Boolean> doneBySessionId = new HashMap<>();
+    private HashMap<String, Boolean> soundStateBySessionId(@NonNull List<GhostexRemoteSession> sessions) {
+        HashMap<String, Boolean> soundStateBySessionId = new HashMap<>();
         for (GhostexRemoteSession session : sessions) {
-            doneBySessionId.put(session.sessionId, GhostexServiceNotificationFormatter.isDone(session));
+            soundStateBySessionId.put(session.sessionId, GhostexServiceNotificationFormatter.shouldPlayStatusSound(session));
         }
-        return doneBySessionId;
+        return soundStateBySessionId;
     }
 
-    private boolean hasNewDoneSessionTransition(@NonNull HashMap<String, Boolean> previousDoneBySessionId,
+    private boolean hasNewStatusSoundTransition(@NonNull HashMap<String, Boolean> previousSoundStateBySessionId,
                                                 @NonNull List<GhostexRemoteSession> sessions) {
-        if (previousDoneBySessionId.isEmpty()) return false;
+        if (previousSoundStateBySessionId.isEmpty()) return false;
         for (GhostexRemoteSession session : sessions) {
-            Boolean wasDone = previousDoneBySessionId.get(session.sessionId);
-            if (Boolean.FALSE.equals(wasDone) && GhostexServiceNotificationFormatter.isDone(session)) {
+            Boolean hadSoundState = previousSoundStateBySessionId.get(session.sessionId);
+            if (Boolean.FALSE.equals(hadSoundState) && GhostexServiceNotificationFormatter.shouldPlayStatusSound(session)) {
                 return true;
             }
         }
@@ -1457,6 +1463,12 @@ public final class GhostexAndroidController {
             doneNotificationSoundPool.release();
             doneNotificationSoundPool = null;
         }
+    }
+
+    private boolean isSessionDrawerVisible() {
+        return sessionsPage != null &&
+            sessionsPage.getVisibility() == View.VISIBLE &&
+            activity.getDrawer().isDrawerOpen(Gravity.LEFT);
     }
 
     private boolean hasVisibleSessionList() {
@@ -1734,7 +1746,8 @@ public final class GhostexAndroidController {
 
     private void rebuildDrawerItems() {
         drawerItems.clear();
-        drawerItems.addAll(GhostexDrawerItem.buildItems(remoteSessions, collapsedProjectKeys));
+        drawerItems.addAll(GhostexDrawerItem.buildItems(remoteSessions, collapsedProjectKeys,
+            collapsedProjectSessionListKeys));
         pruneCollapsedProjectKeys();
     }
 
@@ -1747,6 +1760,20 @@ public final class GhostexAndroidController {
         }
         GhostexDrawerScrollAnchor scrollAnchor = captureDrawerScrollAnchor();
         rebuildDrawerItems();
+        saveDrawerDisclosureState();
+        notifyDrawerAdapterPreservingScroll(scrollAnchor);
+    }
+
+    private void toggleProjectSessionListCollapsed(@NonNull GhostexDrawerItem projectItem) {
+        if (projectItem.type != GhostexDrawerItem.Type.PROJECT_SESSION_LIST_TOGGLE) return;
+        if (collapsedProjectSessionListKeys.contains(projectItem.projectKey)) {
+            collapsedProjectSessionListKeys.remove(projectItem.projectKey);
+        } else {
+            collapsedProjectSessionListKeys.add(projectItem.projectKey);
+        }
+        GhostexDrawerScrollAnchor scrollAnchor = captureDrawerScrollAnchor();
+        rebuildDrawerItems();
+        saveDrawerDisclosureState();
         notifyDrawerAdapterPreservingScroll(scrollAnchor);
     }
 
@@ -1755,7 +1782,29 @@ public final class GhostexAndroidController {
         for (GhostexDrawerItem item : drawerItems) {
             if (item.type == GhostexDrawerItem.Type.PROJECT_HEADER) liveProjectKeys.add(item.projectKey);
         }
-        collapsedProjectKeys.retainAll(liveProjectKeys);
+        boolean projectKeysChanged = collapsedProjectKeys.retainAll(liveProjectKeys);
+        boolean sessionListKeysChanged = collapsedProjectSessionListKeys.retainAll(liveProjectKeys);
+        if (projectKeysChanged || sessionListKeysChanged) saveDrawerDisclosureState();
+    }
+
+    private void loadDrawerDisclosureState(@NonNull GhostexMachine machine) {
+        /*
+        CDXC:AndroidSidebar 2026-05-26-14:42:
+        Android project disclosure and long-list Show less state are local
+        sidebar navigation choices. Store them per saved SSH machine so a
+        restart restores the drawer without bleeding project ids across Macs.
+        */
+        collapsedProjectKeys.clear();
+        collapsedProjectKeys.addAll(machineStore.getCollapsedProjectKeys(machine.id));
+        collapsedProjectSessionListKeys.clear();
+        collapsedProjectSessionListKeys.addAll(machineStore.getCollapsedProjectSessionListKeys(machine.id));
+    }
+
+    private void saveDrawerDisclosureState() {
+        GhostexMachine machine = machineStore.getLastMachine();
+        if (machine == null) return;
+        machineStore.setCollapsedProjectKeys(machine.id, collapsedProjectKeys);
+        machineStore.setCollapsedProjectSessionListKeys(machine.id, collapsedProjectSessionListKeys);
     }
 
     private void setDrawerState(@NonNull String title, @NonNull String body, @NonNull String actionHint) {
@@ -2242,10 +2291,8 @@ public final class GhostexAndroidController {
 
     private ArrayList<GhostexRemoteSession> sessionsForProject(@NonNull String projectKey) {
         ArrayList<GhostexRemoteSession> result = new ArrayList<>();
-        for (GhostexDrawerItem item : drawerItems) {
-            if (item.type == GhostexDrawerItem.Type.SESSION && projectKey.equals(item.projectKey) && item.session != null) {
-                result.add(item.session);
-            }
+        for (GhostexRemoteSession session : remoteSessions) {
+            if (projectKey.equals(GhostexDrawerItem.projectKeyForSession(session))) result.add(session);
         }
         return result;
     }

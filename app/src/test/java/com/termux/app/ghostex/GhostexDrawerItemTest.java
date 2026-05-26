@@ -151,6 +151,36 @@ public final class GhostexDrawerItemTest {
     }
 
     @Test
+    public void buildItemsAddsMacStyleShowLessToggleForLongProjectLists() {
+        ArrayList<GhostexRemoteSession> sessions = sessionsInProject("project-a", "Ghostex", 8);
+
+        List<GhostexDrawerItem> items = GhostexDrawerItem.buildItems(sessions);
+
+        Assert.assertEquals(10, items.size());
+        Assert.assertEquals(GhostexDrawerItem.Type.PROJECT_HEADER, items.get(0).type);
+        Assert.assertEquals(GhostexDrawerItem.Type.PROJECT_SESSION_LIST_TOGGLE, items.get(9).type);
+        Assert.assertFalse(items.get(9).sessionListCollapsed);
+        Assert.assertEquals(8, items.get(9).sessionCount);
+    }
+
+    @Test
+    public void buildItemsShowsFirstSixSessionsAfterShowLess() {
+        ArrayList<GhostexRemoteSession> sessions = sessionsInProject("project-a", "Ghostex", 8);
+        java.util.HashSet<String> collapsedSessionListKeys = new java.util.HashSet<>();
+        collapsedSessionListKeys.add("id:project-a");
+
+        List<GhostexDrawerItem> items = GhostexDrawerItem.buildItems(sessions,
+            java.util.Collections.emptySet(), collapsedSessionListKeys);
+
+        Assert.assertEquals(8, items.size());
+        Assert.assertEquals(GhostexDrawerItem.Type.PROJECT_HEADER, items.get(0).type);
+        Assert.assertEquals(GhostexDrawerItem.Type.SESSION, items.get(6).type);
+        Assert.assertEquals(GhostexDrawerItem.Type.PROJECT_SESSION_LIST_TOGGLE, items.get(7).type);
+        Assert.assertTrue(items.get(7).sessionListCollapsed);
+        Assert.assertEquals(GhostexDrawerItem.PROJECT_SESSION_LIST_COLLAPSED_COUNT, 6);
+    }
+
+    @Test
     public void stateCardPreservesRecoveryCopy() {
         GhostexDrawerItem item = GhostexDrawerItem.stateCard("Connection needs attention",
             "Could not reach the machine.", "Use Retry or open Tailscale.");
@@ -320,6 +350,15 @@ public final class GhostexDrawerItemTest {
         return new GhostexRemoteSession(alias, "session-" + alias, projectId, "Session " + alias,
             projectName, "/tmp/" + projectName, activity, sleeping ? "sleep" : activity, "zmx",
             "zmx-" + alias, "codex", lastInteractionAt, false, sleeping);
+    }
+
+    private ArrayList<GhostexRemoteSession> sessionsInProject(String projectId, String projectName, int count) {
+        ArrayList<GhostexRemoteSession> sessions = new ArrayList<>();
+        for (int index = 0; index < count; index++) {
+            sessions.add(session(String.valueOf(index), projectId, projectName, "idle", false,
+                "2026-05-17T10:0" + index + ":00Z"));
+        }
+        return sessions;
     }
 
 }
