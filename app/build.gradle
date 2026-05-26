@@ -1262,14 +1262,23 @@ task verifyGhostexReleaseDrawerSurface() {
             !controllerText.contains("refreshSessionsButton.setOnClickListener(v -> reconnectLastMachine(false))")) {
             violations.add(controllerFile.name + ": sidebar refresh button must reload sessions through reconnect")
         }
-        if (!controllerText.contains("DRAWER_SESSION_POLL_MS = 4_000L") ||
+        /*
+        CDXC:AndroidNotifications 2026-05-27-01:52:
+        Android release builds must gate the notification freshness contract, not the older drawer-only polling contract. The selected-machine inventory poll should publish foreground notification rows within five seconds while keeping a separate generation from reconnect/action requests.
+        */
+        def sessionStatusPollPolicyFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexSessionStatusPollPolicy.java")
+        def sessionStatusPollPolicyText = sessionStatusPollPolicyFile.isFile() ? sessionStatusPollPolicyFile.getText("UTF-8") : ""
+        if (!controllerText.contains("SESSION_STATUS_POLL_MS = GhostexSessionStatusPollPolicy.MAX_STATUS_DELAY_MS") ||
             !controllerText.contains("DrawerLayout.SimpleDrawerListener") ||
-            !controllerText.contains("refreshSessionInventoryFromDrawerPoll();") ||
-            !controllerText.contains("scheduleDrawerSessionPolling();") ||
-            !controllerText.contains("drawerSessionPollGeneration") ||
-            !controllerText.contains("drawerSessionPollInFlight") ||
-            !controllerText.contains("handleDrawerPollInventoryResult")) {
-            violations.add(controllerFile.name + ": sessions sidebar must refresh on drawer open and poll every 4 seconds without reusing action generations")
+            !controllerText.contains("refreshSessionInventoryFromSessionStatusPoll();") ||
+            !controllerText.contains("scheduleSessionStatusPolling();") ||
+            !controllerText.contains("sessionStatusPollGeneration") ||
+            !controllerText.contains("sessionStatusPollInFlight") ||
+            !controllerText.contains("handleSessionStatusPollInventoryResult") ||
+            !controllerText.contains("GhostexSessionStatusPollPolicy.shouldPoll(") ||
+            !sessionStatusPollPolicyText.contains("MAX_STATUS_DELAY_MS = 5_000L") ||
+            !sessionStatusPollPolicyText.contains("return !controllerDestroyed && tutorialSeen && hasSelectedMachine;")) {
+            violations.add(controllerFile.name + ": notification session statuses must refresh from selected-machine inventory within 5 seconds without requiring the sidebar to stay open")
         }
         if (!controllerText.contains("row.setContentDescription(GhostexAccessibilityCopy.join(action.label, action.detail") ||
             !controllerText.contains("Destructive action. Tap to run.")) {
@@ -1318,12 +1327,14 @@ task verifyGhostexReleaseDrawerSurface() {
             violations.add(inventoryClientFile.name + ": create-session must parse the Mac CLI created session id from JSON")
         }
         if (!controllerText.contains("collapsedProjectKeys") ||
-            !controllerText.contains("GhostexDrawerItem.buildItems(remoteSessions, collapsedProjectKeys)") ||
+            !controllerText.contains("collapsedProjectSessionListKeys") ||
+            !controllerText.contains("GhostexDrawerItem.buildItems(remoteSessions, collapsedProjectKeys,") ||
             !controllerText.contains("toggleProjectCollapsed") ||
+            !controllerText.contains("toggleProjectSessionListCollapsed") ||
             !controllerText.contains("Move project up") ||
             !controllerText.contains("Move project down") ||
             !controllerText.contains("inventoryClient.moveProject")) {
-            violations.add(controllerFile.name + ": project headers must collapse locally and project move actions must run through the Mac CLI")
+            violations.add(controllerFile.name + ": project headers and long session lists must collapse locally and project move actions must run through the Mac CLI")
         }
         if (!controllerText.contains("restoreWarmAttachSessionsFromService();") ||
             !controllerText.contains("GhostexWarmSessionMetadata.buildAttachCommandLabel") ||
