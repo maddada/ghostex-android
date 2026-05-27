@@ -22,6 +22,18 @@ public final class GhostexZmxViewportRefreshTest {
         Assert.assertFalse(session("tmux").isZmxBacked());
     }
 
+    @Test
+    public void waitsForMeasuredTerminalViewBeforeRefresh() {
+        /*
+        CDXC:AndroidNotifications 2026-05-27-05:31:
+        Notification session taps can foreground the Activity before the terminal view is measured. The zmx refresh should wait for nonzero dimensions so the attach resize and refresh are not lost.
+        */
+        Assert.assertFalse(GhostexZmxViewportRefresh.isTerminalViewReadyForRefresh(0, 480));
+        Assert.assertFalse(GhostexZmxViewportRefresh.isTerminalViewReadyForRefresh(320, 0));
+        Assert.assertTrue(GhostexZmxViewportRefresh.isTerminalViewReadyForRefresh(320, 480));
+        Assert.assertEquals(6, GhostexZmxViewportRefresh.MAX_VIEWPORT_READY_ATTEMPTS);
+    }
+
     private GhostexRemoteSession session(String provider) {
         return new GhostexRemoteSession(
             "1",

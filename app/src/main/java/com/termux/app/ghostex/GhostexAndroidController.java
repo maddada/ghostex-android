@@ -1368,11 +1368,17 @@ public final class GhostexAndroidController {
         A notification shade row represents a concrete remote ZMX session. Route
         taps through the normal attach path so warm-session reuse, selected row
         state, drawer focus, and SSHJ attach behavior match tapping the drawer.
+
+        CDXC:AndroidNotifications 2026-05-27-05:31:
+        Notification row taps also need the same post-attach terminal resize and
+        zmx viewport refresh as sidebar taps. Keep a distinct attach origin so
+        the refresh can wait for TerminalView to be measured after Android
+        foregrounds the Activity from the notification shade.
         */
         for (GhostexRemoteSession session : remoteSessions) {
             if (session.sessionId.equals(sessionId)) {
                 activity.getDrawer().closeDrawer(Gravity.LEFT);
-                attachRemoteSession(session);
+                attachRemoteSessionFromNotification(session);
                 return;
             }
         }
@@ -1389,7 +1395,7 @@ public final class GhostexAndroidController {
         for (GhostexRemoteSession session : remoteSessions) {
             if (session.sessionId.equals(sessionId)) {
                 activity.getDrawer().closeDrawer(Gravity.LEFT);
-                attachRemoteSession(session);
+                attachRemoteSessionFromNotification(session);
                 return;
             }
         }
@@ -1516,6 +1522,16 @@ public final class GhostexAndroidController {
 
     private void attachRemoteSession(@Nullable GhostexMachine machine,
                                      @NonNull GhostexRemoteSession remoteSession) {
+        attachRemoteSession(machine, remoteSession, GhostexAttachOrigin.SIDEBAR);
+    }
+
+    private void attachRemoteSessionFromNotification(@NonNull GhostexRemoteSession remoteSession) {
+        attachRemoteSession(machineStore.getLastMachine(), remoteSession, GhostexAttachOrigin.NOTIFICATION);
+    }
+
+    private void attachRemoteSession(@Nullable GhostexMachine machine,
+                                     @NonNull GhostexRemoteSession remoteSession,
+                                     @NonNull GhostexAttachOrigin origin) {
         TermuxService service = activity.getTermuxService();
         if (machine == null || service == null) return;
         if (!canRunRemoteSidebarAction(machine, "attaching to this session")) return;
@@ -1529,7 +1545,7 @@ public final class GhostexAndroidController {
             sessionAdapter.setActiveSession(machine, remoteSession);
             activity.getTermuxTerminalSessionClient().setCurrentSession(warmSession);
             applyAutoScrollSettingToCurrentTerminal();
-            refreshZmxViewportOnceAfterSidebarSwitch(warmSession, remoteSession, "warm-session-reuse");
+            refreshZmxViewportOnceAfterSessionSwitch(warmSession, remoteSession, origin.reason("warm-session-reuse"), 1);
             activity.getDrawer().closeDrawers();
             return;
         }
@@ -1537,12 +1553,13 @@ public final class GhostexAndroidController {
         String password = readPassword(machine);
         setStatus("Preparing SSH attach for " + remoteSession.alias + "...");
         ++attachGeneration;
-        openRemoteAttachTerminal(machine, remoteSession, password);
+        openRemoteAttachTerminal(machine, remoteSession, password, origin);
     }
 
     private void openRemoteAttachTerminal(@NonNull GhostexMachine machine,
                                           @NonNull GhostexRemoteSession remoteSession,
-                                          @Nullable String password) {
+                                          @Nullable String password,
+                                          @NonNull GhostexAttachOrigin origin) {
         TermuxService service = activity.getTermuxService();
         if (service == null) return;
         String sessionLogTag = zmxSessionLogTag(remoteSession);
@@ -1576,26 +1593,41 @@ public final class GhostexAndroidController {
         sessionAdapter.setActiveSession(machine, remoteSession);
         activity.getTermuxTerminalSessionClient().setCurrentSession(terminalSession);
         applyAutoScrollSettingToCurrentTerminal();
-        refreshZmxViewportOnceAfterSidebarSwitch(terminalSession, remoteSession, "new-ssh-attach");
+        refreshZmxViewportOnceAfterSessionSwitch(terminalSession, remoteSession, origin.reason("new-ssh-attach"), 1);
         activity.getDrawer().closeDrawers();
         setStatus("Attached to " + remoteSession.alias + " on " + machine.displayLabel() + ". Logs: " +
             GhostexFileLogger.shareableLogPath(activity));
     }
 
-    private void refreshZmxViewportOnceAfterSidebarSwitch(@NonNull TerminalSession terminalSession,
+    private void refreshZmxViewportOnceAfterSessionSwitch(@NonNull TerminalSession terminalSession,
                                                          @NonNull GhostexRemoteSession remoteSession,
-                                                         @NonNull String reason) {
-        if (!GhostexZmxViewportRefresh.shouldRefreshAfterSidebarSwitch(remoteSession, terminalSession)) {
+                                                         @NonNull String reason,
+                                                         int attempt) {
+        if (!GhostexZmxViewportRefresh.shouldRefreshAfterSessionSwitch(remoteSession, terminalSession)) {
             return;
         }
         String sessionLogTag = zmxSessionLogTag(remoteSession);
         GhostexFileLogger.log(activity, "attach", sessionLogTag,
-            "zmx viewport refresh scheduled reason=" + reason + " delayMs=" + ZMX_SWITCH_REFRESH_DELAY_MS);
+            "zmx viewport refresh scheduled reason=" + reason + " attempt=" + attempt +
+                " delayMs=" + ZMX_SWITCH_REFRESH_DELAY_MS);
         mainHandler.postDelayed(() -> {
             if (destroyed || activity.getCurrentSession() != terminalSession ||
-                !GhostexZmxViewportRefresh.shouldRefreshAfterSidebarSwitch(remoteSession, terminalSession)) {
+                !GhostexZmxViewportRefresh.shouldRefreshAfterSessionSwitch(remoteSession, terminalSession)) {
                 GhostexFileLogger.log(activity, "attach", sessionLogTag,
                     "zmx viewport refresh skipped reason=" + reason);
+                return;
+            }
+            if (!GhostexZmxViewportRefresh.isTerminalViewReadyForRefresh(
+                activity.getTerminalView().getWidth(), activity.getTerminalView().getHeight())) {
+                if (attempt < GhostexZmxViewportRefresh.MAX_VIEWPORT_READY_ATTEMPTS) {
+                    GhostexFileLogger.log(activity, "attach", sessionLogTag,
+                        "zmx viewport refresh waiting for terminal view size reason=" + reason +
+                            " attempt=" + attempt);
+                    refreshZmxViewportOnceAfterSessionSwitch(terminalSession, remoteSession, reason, attempt + 1);
+                } else {
+                    GhostexFileLogger.log(activity, "attach", sessionLogTag,
+                        "zmx viewport refresh skipped because terminal view stayed size 0 reason=" + reason);
+                }
                 return;
             }
             activity.getTerminalView().updateSize();
@@ -1614,6 +1646,22 @@ public final class GhostexAndroidController {
             ? "missing"
             : remoteSession.sessionId.trim();
         return "zmx=" + alias + " sessionId=" + sessionId;
+    }
+
+    private enum GhostexAttachOrigin {
+        SIDEBAR("sidebar"),
+        NOTIFICATION("notification");
+
+        private final String label;
+
+        GhostexAttachOrigin(@NonNull String label) {
+            this.label = label;
+        }
+
+        @NonNull
+        String reason(@NonNull String baseReason) {
+            return label + "-" + baseReason;
+        }
     }
 
     private void handleFileUploadResult(@NonNull TerminalSession targetSession,

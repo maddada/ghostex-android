@@ -899,6 +899,37 @@ task verifyGhostexReleaseNotificationSurface() {
                 }
             }
         }
+        /*
+        CDXC:AndroidNotifications 2026-05-27-05:31:
+        Notification session rows are active attach targets. Gate the visible
+        pressed-state drawable and the notification-origin attach path so row
+        taps keep both touch feedback and the same post-attach zmx refresh as
+        sidebar taps.
+        */
+        def termuxServiceText = new File(projectDir, "src/main/java/com/termux/app/TermuxService.java").getText("UTF-8")
+        def controllerText = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexAndroidController.java").getText("UTF-8")
+        def zmxRefreshText = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexZmxViewportRefresh.java").getText("UTF-8")
+        def collapsedNotificationText = new File(projectDir, "src/main/res/layout/notification_ghostex_collapsed.xml").getText("UTF-8")
+        def expandedNotificationText = new File(projectDir, "src/main/res/layout/notification_ghostex_expanded.xml").getText("UTF-8")
+        def notificationStylesText = new File(projectDir, "src/main/res/values/styles.xml").getText("UTF-8")
+        def notificationTouchDrawableText = new File(projectDir, "src/main/res/drawable/ghostex_notification_row_touch.xml").getText("UTF-8")
+        if (!termuxServiceText.contains("views.setOnClickPendingIntent(rowIds[index]") ||
+            !controllerText.contains("attachRemoteSessionFromNotification(session)") ||
+            !controllerText.contains("GhostexAttachOrigin.NOTIFICATION") ||
+            !controllerText.contains("isTerminalViewReadyForRefresh") ||
+            !zmxRefreshText.contains("MAX_VIEWPORT_READY_ATTEMPTS = 6") ||
+            !zmxRefreshText.contains("isTerminalViewReadyForRefresh")) {
+            violations.add("notification session taps must activate through the notification attach origin and wait for a measured terminal before zmx refresh")
+        }
+        if (!collapsedNotificationText.contains("@drawable/ghostex_notification_row_touch") ||
+            !collapsedNotificationText.contains("android:clickable=\"true\"") ||
+            !expandedNotificationText.contains("CDXC:AndroidNotifications 2026-05-27-05:31") ||
+            !notificationStylesText.contains("<item name=\"android:background\">@drawable/ghostex_notification_row_touch</item>") ||
+            !notificationStylesText.contains("<item name=\"android:clickable\">true</item>") ||
+            !notificationTouchDrawableText.contains("android:state_pressed=\"true\"") ||
+            !notificationTouchDrawableText.contains("@android:color/transparent")) {
+            violations.add("notification session rows must keep transparent normal styling with a visible pressed/focused touch state")
+        }
         if (!violations.isEmpty()) {
             throw new GradleException("Ghostex Android notification surface is not release-ready: " + violations.join(", "))
         }
