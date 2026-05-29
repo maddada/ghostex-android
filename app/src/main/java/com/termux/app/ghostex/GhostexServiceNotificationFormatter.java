@@ -110,7 +110,8 @@ public final class GhostexServiceNotificationFormatter {
     }
 
     public static boolean isRunning(@NonNull GhostexRemoteSession session) {
-        if (session.isSleeping || isDone(session) || isWorking(session)) return false;
+        if ((session.isSleeping && !session.isLive) || isDone(session) || isWorking(session)) return false;
+        if (session.isLive) return true;
         String status = session.status == null ? "" : session.status.trim().toLowerCase(Locale.US);
         String displayStatus = session.displayStatus();
         return "running".equals(status) || "idle".equals(displayStatus) || displayStatus.isEmpty();

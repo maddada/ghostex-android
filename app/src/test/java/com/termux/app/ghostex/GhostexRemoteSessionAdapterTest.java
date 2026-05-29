@@ -223,6 +223,60 @@ public final class GhostexRemoteSessionAdapterTest {
     }
 
     @Test
+    public void providerBackedSessionDoesNotUseLegacySleepingStatus() throws Exception {
+        /*
+        CDXC:AndroidRemoteSessions 2026-05-29-09:20:
+        A Mac row can have no native pane while the zmx provider session still
+        exists. Android must display that row as live, not sleeping, so mobile
+        counts and icons match the macOS sidebar projection.
+        */
+        JSONObject json = new JSONObject()
+            .put("alias", 8)
+            .put("sessionId", "session-8")
+            .put("projectId", "project-1")
+            .put("title", "Detached live")
+            .put("status", "sleep")
+            .put("provider", "zmx")
+            .put("isSleeping", true)
+            .put("nativePaneState", "unmounted")
+            .put("providerSessionState", "exists")
+            .put("isLive", true);
+
+        GhostexRemoteSession session = GhostexRemoteSession.fromJson(json);
+
+        Assert.assertNotNull(session);
+        Assert.assertTrue(session.isLive);
+        Assert.assertFalse(session.isSleeping);
+        Assert.assertEquals("idle", session.displayStatus());
+        Assert.assertFalse(GhostexRemoteSessionAdapter.showsSleepingIcon(session));
+    }
+
+    @Test
+    public void disabledProviderStateIsNotUnknown() throws Exception {
+        /*
+        CDXC:AndroidRemoteSessions 2026-05-29-06:29:
+        Disabled persistence is a deliberate Mac-side session configuration.
+        Android should preserve it as `persistence-disabled`, not collapse it
+        into unknown provider state.
+        */
+        JSONObject json = new JSONObject()
+            .put("alias", 9)
+            .put("sessionId", "session-9")
+            .put("projectId", "project-1")
+            .put("title", "Providerless")
+            .put("status", "running")
+            .put("providerSessionState", "persistence-disabled")
+            .put("nativePaneState", "mounted");
+
+        GhostexRemoteSession session = GhostexRemoteSession.fromJson(json);
+
+        Assert.assertNotNull(session);
+        Assert.assertEquals("persistence-disabled", session.providerSessionState);
+        Assert.assertTrue(session.isLive);
+        Assert.assertEquals("idle", session.displayStatus());
+    }
+
+    @Test
     public void projectSessionListToggleUsesShowMoreShowLessLabels() {
         ArrayList<GhostexRemoteSession> sessions = new ArrayList<>();
         for (int index = 0; index < 8; index++) {

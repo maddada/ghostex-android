@@ -24,6 +24,9 @@ public final class GhostexRemoteSession {
     public final String lastInteractionAt;
     public final boolean isFocused;
     public final boolean isSleeping;
+    public final String nativePaneState;
+    public final String providerSessionState;
+    public final boolean isLive;
 
     /*
     CDXC:AndroidSidebar 2026-05-17-10:43:
@@ -70,6 +73,21 @@ public final class GhostexRemoteSession {
     when the Mac inventory sends `activity: idle` plus an actionable lifecycle
     `status`. Prefer actionable status tokens over idle activity so mobile
     mirrors the desktop sidebar instead of hiding active-session state.
+
+    CDXC:AndroidRemoteSessions 2026-05-29-09:20:
+    Remote session liveness is resource-based. Keep `nativePaneState`,
+    `providerSessionState`, and derived `isLive` beside the legacy sleep flag so
+    Android shows zmx-backed sessions as live even when the Mac has no native
+    pane mounted for that session.
+
+    CDXC:AndroidRemoteSessions 2026-05-29-06:29:
+    Provider-disabled Mac sessions are a known state, not an unknown backend
+    check. Preserve an explicit provider-disabled value so Android can distinguish
+    disabled persistence from a provider existence probe that has not completed.
+
+    CDXC:AndroidRemoteSessions 2026-05-29-07:19:
+    Normalize provider-disabled sessions to `persistence-disabled`, not generic
+    `disabled`, so remote inventory names the disabled capability directly.
     */
     public GhostexRemoteSession(String alias, String sessionId, String projectId, String title,
                                 String projectName, String projectPath, String activity,
@@ -96,6 +114,19 @@ public final class GhostexRemoteSession {
                                 String status, String provider, String providerSessionName,
                                 String agent, String agentIcon, String lastInteractionAt,
                                 boolean isFocused, boolean isSleeping) {
+        this(alias, sessionId, projectId, groupId, title, projectName, projectPath, activity,
+            status, provider, providerSessionName, agent, agentIcon, lastInteractionAt, isFocused,
+            isSleeping, defaultNativePaneState(isSleeping, activity, status), "unknown",
+            deriveIsLive(defaultNativePaneState(isSleeping, activity, status), "unknown", isSleeping,
+                normalizedSessionState(activity), normalizedSessionState(status)));
+    }
+
+    private GhostexRemoteSession(String alias, String sessionId, String projectId, String groupId,
+                                 String title, String projectName, String projectPath, String activity,
+                                 String status, String provider, String providerSessionName,
+                                 String agent, String agentIcon, String lastInteractionAt,
+                                 boolean isFocused, boolean isSleeping, String nativePaneState,
+                                 String providerSessionState, boolean isLive) {
         this.alias = alias;
         this.sessionId = sessionId;
         this.projectId = projectId;
@@ -111,7 +142,10 @@ public final class GhostexRemoteSession {
         this.agentIcon = agentIcon;
         this.lastInteractionAt = lastInteractionAt;
         this.isFocused = isFocused;
-        this.isSleeping = isSleeping;
+        this.nativePaneState = normalizedNativePaneState(nativePaneState, isSleeping, activity, status);
+        this.providerSessionState = normalizedProviderSessionState(providerSessionState);
+        this.isLive = isLive;
+        this.isSleeping = isSleeping && !isLive;
     }
 
     @Nullable
@@ -127,6 +161,12 @@ public final class GhostexRemoteSession {
         String activity = normalizedSessionState(firstNonEmpty(trimmedJsonValue(json, "activity"),
             trimmedJsonValue(json, "activityState"), trimmedJsonValue(json, "activityStatus")));
         String groupId = trimmedJsonValue(json, "groupId");
+        boolean legacySleeping = json.optBoolean("isSleeping", "sleeping".equals(status) || "sleep".equals(status));
+        String nativePaneState = normalizedNativePaneState(trimmedJsonValue(json, "nativePaneState"), legacySleeping, activity, status);
+        String providerSessionState = normalizedProviderSessionState(trimmedJsonValue(json, "providerSessionState"));
+        boolean isLive = json.has("isLive")
+            ? json.optBoolean("isLive", false)
+            : deriveIsLive(nativePaneState, providerSessionState, legacySleeping, activity, status);
         return new GhostexRemoteSession(
             alias,
             sessionId,
@@ -143,7 +183,10 @@ public final class GhostexRemoteSession {
             trimmedJsonValue(json, "agentIcon"),
             trimmedJsonValue(json, "lastInteractionAt"),
             json.optBoolean("isFocused", false),
-            json.optBoolean("isSleeping", "sleeping".equals(status) || "sleep".equals(status))
+            legacySleeping,
+            nativePaneState,
+            providerSessionState,
+            isLive
         );
     }
 
@@ -158,15 +201,17 @@ public final class GhostexRemoteSession {
     }
 
     public String displayStatus() {
-        if (isSleeping) return "sleep";
+        if (isSleeping && !isLive) return "sleep";
         String activityState = normalizedSessionState(activity);
         String statusState = normalizedSessionState(status);
         if (isActionableStatus(activityState)) return activityState;
         if (isActionableStatus(statusState)) return statusState;
-        if ("sleep".equals(activityState) || "sleeping".equals(activityState) ||
-            "sleep".equals(statusState) || "sleeping".equals(statusState)) return "sleep";
-        if (!activityState.isEmpty() && !"running".equals(activityState)) return activityState;
-        if (!statusState.isEmpty() && !"running".equals(statusState)) return statusState;
+        if (!isLive && ("sleep".equals(activityState) || "sleeping".equals(activityState) ||
+            "sleep".equals(statusState) || "sleeping".equals(statusState))) return "sleep";
+        if (!activityState.isEmpty() && !"running".equals(activityState) &&
+            (!isLive || !"sleep".equals(activityState))) return activityState;
+        if (!statusState.isEmpty() && !"running".equals(statusState) &&
+            (!isLive || !"sleep".equals(statusState))) return statusState;
         return "idle";
     }
 
@@ -187,6 +232,61 @@ public final class GhostexRemoteSession {
         if ("active".equals(normalized) || "busy".equals(normalized) || "processing".equals(normalized)) return "working";
         if ("sleeping".equals(normalized)) return "sleep";
         return normalized;
+    }
+
+    private static String normalizedNativePaneState(String value, boolean isSleeping, String activity, String status) {
+        String normalized = normalizedToken(value).replace('_', '-').replace(' ', '-');
+        if ("mounted".equals(normalized) || "mounting".equals(normalized) || "unmounted".equals(normalized)) {
+            return normalized;
+        }
+        return defaultNativePaneState(isSleeping, activity, status);
+    }
+
+    private static String defaultNativePaneState(boolean isSleeping, String activity, String status) {
+        if (isSleeping) return "unmounted";
+        String activityState = normalizedSessionState(activity);
+        String statusState = normalizedSessionState(status);
+        if ("working".equals(activityState) || "attention".equals(activityState) ||
+            "working".equals(statusState) || "attention".equals(statusState) ||
+            "running".equals(activityState) || "running".equals(statusState) ||
+            "idle".equals(activityState) || "idle".equals(statusState)) {
+            return "mounted";
+        }
+        return "unmounted";
+    }
+
+    private static String normalizedProviderSessionState(String value) {
+        String normalized = normalizedToken(value).replace('_', '-').replace(' ', '-');
+        if ("persistence-disabled".equals(normalized) || "exists".equals(normalized) ||
+            "missing".equals(normalized) || "unknown".equals(normalized)) {
+            return normalized;
+        }
+        if ("disabled".equals(normalized) || "none".equals(normalized) ||
+            "off".equals(normalized) || "disabled-persistence".equals(normalized)) {
+            return "persistence-disabled";
+        }
+        if ("running".equals(normalized)) return "exists";
+        return "unknown";
+    }
+
+    private static boolean deriveIsLive(String nativePaneState, String providerSessionState,
+                                        boolean isSleeping, String activity, String status) {
+        if ("mounted".equals(nativePaneState) || "mounting".equals(nativePaneState) ||
+            "exists".equals(providerSessionState)) {
+            return true;
+        }
+        String activityState = normalizedSessionState(activity);
+        String statusState = normalizedSessionState(status);
+        if ("working".equals(activityState) || "attention".equals(activityState) ||
+            "working".equals(statusState) || "attention".equals(statusState)) return true;
+        if (isSleeping || "sleep".equals(activityState) || "sleep".equals(statusState) ||
+            "done".equals(activityState) || "done".equals(statusState) ||
+            "error".equals(activityState) || "error".equals(statusState) ||
+            "exited".equals(statusState)) {
+            return false;
+        }
+        return "running".equals(activityState) || "running".equals(statusState) ||
+            "idle".equals(activityState) || "idle".equals(statusState);
     }
 
     private static boolean isActionableStatus(String value) {
