@@ -127,7 +127,16 @@ public final class GhostexSshCommandBuilder {
             throw new IllegalArgumentException("Unsupported Ghostex session action: " + action);
         }
         String sessionId = requireSessionId(session);
-        return "ghostex " + action + " --session-id " + shellQuote(sessionId) + " --json";
+        /*
+        CDXC:AndroidRemoteSessions 2026-05-31-08:45:
+        gxserver lifecycle RPCs are project-scoped. Android already receives
+        projectId from `ghostex sessions --json`, so include it on sleep, wake,
+        focus, and kill commands instead of relying on a Mac-side selector
+        lookup when the tapped row has enough identity.
+        */
+        String projectId = session.projectId == null ? "" : session.projectId.trim();
+        String projectFlag = projectId.isEmpty() ? "" : " --project-id " + shellQuote(projectId);
+        return "ghostex " + action + " --session-id " + shellQuote(sessionId) + projectFlag + " --json";
     }
 
     public static String attachRemoteCommand(@NonNull GhostexRemoteSession session) {
@@ -144,7 +153,10 @@ public final class GhostexSshCommandBuilder {
     public static String renameSessionRemoteCommand(@NonNull GhostexRemoteSession session,
                                                     @NonNull String title) {
         String sessionId = requireSessionId(session);
+        String projectId = session.projectId == null ? "" : session.projectId.trim();
+        String projectFlag = projectId.isEmpty() ? "" : " --project-id " + shellQuote(projectId);
         return "ghostex rename-session --session-id " + shellQuote(sessionId) +
+            projectFlag +
             " --title=" + shellQuote(title) + " --json";
     }
 

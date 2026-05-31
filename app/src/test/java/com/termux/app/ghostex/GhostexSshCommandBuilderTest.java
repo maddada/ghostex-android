@@ -103,7 +103,8 @@ public final class GhostexSshCommandBuilderTest {
 
         String command = GhostexSshCommandBuilder.buildSessionActionCommand(machine(), session, "sleep", false);
 
-        Assert.assertEquals("ghostex sleep --session-id " + GhostexSshCommandBuilder.shellQuote(session.sessionId) + " --json",
+        Assert.assertEquals("ghostex sleep --session-id " + GhostexSshCommandBuilder.shellQuote(session.sessionId)
+                + " --project-id " + GhostexSshCommandBuilder.shellQuote(session.projectId) + " --json",
             command);
         Assert.assertFalse(command.contains("ghostex sleep " + GhostexSshCommandBuilder.shellQuote(session.alias)));
     }
@@ -149,7 +150,8 @@ public final class GhostexSshCommandBuilderTest {
         String command = GhostexSshCommandBuilder.buildRenameSessionCommand(machine(), session, "Ship Android's polish", true);
 
         Assert.assertEquals("ghostex rename-session --session-id " +
-            GhostexSshCommandBuilder.shellQuote(session.sessionId) + " --title=" +
+            GhostexSshCommandBuilder.shellQuote(session.sessionId) + " --project-id " +
+            GhostexSshCommandBuilder.shellQuote(session.projectId) + " --title=" +
             GhostexSshCommandBuilder.shellQuote("Ship Android's polish") + " --json", command);
         Assert.assertFalse(command.contains("rename-session " + GhostexSshCommandBuilder.shellQuote(session.alias)));
     }
