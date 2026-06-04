@@ -81,6 +81,12 @@ public final class GhostexSshCommandBuilder {
     Android project reordering must be a Mac-side Ghostex CLI action so the
     desktop app persists the same sidebar order that mobile later receives from
     `ghostex sessions --json`. Validate direction tokens before shell assembly.
+
+    CDXC:AndroidRemoteSessions 2026-06-04-03:33:
+    Attention acknowledgement is a gxserver-owned presentation action exposed
+    through the Mac-side CLI. Keep it in the same validated session-action path
+    as focus, wake, sleep, and kill so Android taps clear attention without
+    inventing a separate status mutation.
     */
     public static String buildCopyableAttachCommand(@NonNull GhostexMachine machine,
                                                     @NonNull GhostexRemoteSession session) {
@@ -146,8 +152,16 @@ public final class GhostexSshCommandBuilder {
         resolve to the same Mac-side CLI invocation. Keep the remote command
         separate from any local shell wrapper so Android can open a PTY through
         SSHJ without depending on Termux package binaries.
+
+        CDXC:AndroidRemoteAttach 2026-06-04-02:22:
+        G session ids are project-scoped in gxserver. Include projectId on
+        attach, matching lifecycle and rename actions, so the Mac-side CLI
+        resolves the exact full server/project/session zmx route instead of a
+        bare session id that can collide across projects.
         */
-        return "ghostex attach --session-id " + shellQuote(requireSessionId(session));
+        String projectId = session.projectId == null ? "" : session.projectId.trim();
+        String projectFlag = projectId.isEmpty() ? "" : " --project-id " + shellQuote(projectId);
+        return "ghostex attach --session-id " + shellQuote(requireSessionId(session)) + projectFlag;
     }
 
     public static String renameSessionRemoteCommand(@NonNull GhostexRemoteSession session,
@@ -211,6 +225,7 @@ public final class GhostexSshCommandBuilder {
             case "wake":
             case "sleep":
             case "kill":
+            case "acknowledge-session-attention":
                 return true;
             default:
                 return false;

@@ -320,6 +320,53 @@ public final class GhostexRemoteSessionAdapterTest {
     }
 
     @Test
+    public void fromJsonPreservesGxserverPresentationActions() throws Exception {
+        /*
+        CDXC:AndroidRemoteSessions 2026-06-04-03:33:
+        Android receives gxserver-owned presentation fields through the CLI.
+        Preserve action availability and attention metadata on the row so taps
+        can acknowledge attention without Android re-deriving state rules.
+        */
+        JSONObject json = new JSONObject()
+            .put("alias", 6)
+            .put("globalRef", "S1a:P1a:G6a")
+            .put("sessionId", "G6a")
+            .put("projectId", "P1a")
+            .put("groupId", "P1a:active")
+            .put("title", "Needs input")
+            .put("activity", "attention")
+            .put("status", "running")
+            .put("provider", "zmx")
+            .put("agentName", "codex")
+            .put("agentIcon", "codex")
+            .put("surface", "workspace")
+            .put("visibleInSidebarByDefault", true)
+            .put("attention", new JSONObject()
+                .put("acknowledged", false)
+                .put("enteredAt", "2026-06-04T00:00:00.000Z"))
+            .put("actions", new JSONObject()
+                .put("acknowledgeAttention", true)
+                .put("attach", true)
+                .put("sendMessage", true)
+                .put("wake", false));
+
+        GhostexRemoteSession session = GhostexRemoteSession.fromJson(json);
+
+        Assert.assertNotNull(session);
+        Assert.assertEquals("S1a:P1a:G6a", session.globalRef);
+        Assert.assertEquals("P1a:active", session.groupId);
+        Assert.assertEquals("codex", session.agentName);
+        Assert.assertEquals("workspace", session.surface);
+        Assert.assertTrue(session.visibleInSidebarByDefault);
+        Assert.assertFalse(session.attentionAcknowledged);
+        Assert.assertEquals("2026-06-04T00:00:00.000Z", session.attentionEnteredAt);
+        Assert.assertTrue(session.actions.acknowledgeAttention);
+        Assert.assertTrue(session.actions.attach);
+        Assert.assertTrue(session.actions.sendMessage);
+        Assert.assertFalse(session.actions.wake);
+    }
+
+    @Test
     public void focusedSessionUsesAccentStatusColor() {
         GhostexRemoteSession focused = new GhostexRemoteSession("3", "session-3", "project-1",
             "Focused", "Ghostex", "/Users/madda/dev/_active/zmux", "idle", "running",

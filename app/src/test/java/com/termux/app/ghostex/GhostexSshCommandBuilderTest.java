@@ -92,9 +92,22 @@ public final class GhostexSshCommandBuilderTest {
         Assert.assertFalse(command.contains("sshpass"));
         Assert.assertTrue(command.contains("'madda@mac.tailnet.ts.net'"));
         String quotedRemoteCommand = GhostexSshCommandBuilder.shellQuote(
-            GhostexSshCommandBuilder.loginShellCommand("ghostex attach --session-id " + GhostexSshCommandBuilder.shellQuote(session.sessionId)));
+            GhostexSshCommandBuilder.loginShellCommand(
+                "ghostex attach --session-id " + GhostexSshCommandBuilder.shellQuote(session.sessionId) +
+                    " --project-id " + GhostexSshCommandBuilder.shellQuote(session.projectId)));
         Assert.assertTrue(command.contains(quotedRemoteCommand));
         Assert.assertFalse(command.contains("ghostex attach " + GhostexSshCommandBuilder.shellQuote(session.alias)));
+    }
+
+    @Test
+    public void attachCommandIncludesProjectIdWhenAvailable() {
+        GhostexRemoteSession session = session();
+
+        String command = GhostexSshCommandBuilder.attachRemoteCommand(session);
+
+        Assert.assertEquals("ghostex attach --session-id " +
+            GhostexSshCommandBuilder.shellQuote(session.sessionId) + " --project-id " +
+            GhostexSshCommandBuilder.shellQuote(session.projectId), command);
     }
 
     @Test
@@ -107,6 +120,25 @@ public final class GhostexSshCommandBuilderTest {
                 + " --project-id " + GhostexSshCommandBuilder.shellQuote(session.projectId) + " --json",
             command);
         Assert.assertFalse(command.contains("ghostex sleep " + GhostexSshCommandBuilder.shellQuote(session.alias)));
+    }
+
+    @Test
+    public void attentionAcknowledgeUsesStableSessionId() {
+        /*
+        CDXC:AndroidRemoteSessions 2026-06-04-03:33:
+        Tapping a gxserver attention row clears attention through the Mac-side
+        CLI before attach. Keep acknowledge on the same stable session-id and
+        project-id command shape as lifecycle actions.
+        */
+        GhostexRemoteSession session = session();
+
+        String command = GhostexSshCommandBuilder.buildSessionActionCommand(
+            machine(), session, "acknowledge-session-attention", false);
+
+        Assert.assertEquals("ghostex acknowledge-session-attention --session-id " +
+                GhostexSshCommandBuilder.shellQuote(session.sessionId) + " --project-id " +
+                GhostexSshCommandBuilder.shellQuote(session.projectId) + " --json",
+            command);
     }
 
     @Test

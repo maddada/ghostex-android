@@ -1532,9 +1532,28 @@ public final class GhostexAndroidController {
     private void attachRemoteSession(@Nullable GhostexMachine machine,
                                      @NonNull GhostexRemoteSession remoteSession,
                                      @NonNull GhostexAttachOrigin origin) {
+        attachRemoteSession(machine, remoteSession, origin, true);
+    }
+
+    private void attachRemoteSession(@Nullable GhostexMachine machine,
+                                     @NonNull GhostexRemoteSession remoteSession,
+                                     @NonNull GhostexAttachOrigin origin,
+                                     boolean acknowledgeAttentionFirst) {
         TermuxService service = activity.getTermuxService();
         if (machine == null || service == null) return;
         if (!canRunRemoteSidebarAction(machine, "attaching to this session")) return;
+
+        /*
+        CDXC:AndroidRemoteSessions 2026-06-04-03:33:
+        Tapping an attention row is both an attach intent and an acknowledgement
+        intent. Let gxserver's presentation `actions.acknowledgeAttention`
+        decide whether Android should clear the attention state before opening
+        the SSH terminal, so mobile does not duplicate attention-state rules.
+        */
+        if (acknowledgeAttentionFirst && remoteSession.actions.acknowledgeAttention) {
+            acknowledgeAttentionThenAttach(machine, remoteSession, origin);
+            return;
+        }
 
         String warmKey = GhostexWarmSessionKey.forSession(machine, remoteSession);
         TerminalSession warmSession = warmSessions.get(warmKey);
@@ -1554,6 +1573,29 @@ public final class GhostexAndroidController {
         setStatus("Preparing SSH attach for " + remoteSession.alias + "...");
         ++attachGeneration;
         openRemoteAttachTerminal(machine, remoteSession, password, origin);
+    }
+
+    private void acknowledgeAttentionThenAttach(@NonNull GhostexMachine machine,
+                                                @NonNull GhostexRemoteSession remoteSession,
+                                                @NonNull GhostexAttachOrigin origin) {
+        long requestGeneration = ++remoteActionGeneration;
+        setStatus("Clearing attention for " + remoteSession.alias + "...");
+        executor.execute(() -> {
+            String password = readPassword(machine);
+            GhostexSessionInventoryClient.Result result =
+                inventoryClient.runSessionAction(machine, password, "acknowledge-session-attention", remoteSession);
+            mainHandler.post(() -> {
+                if (!isCurrentRemoteAction(requestGeneration, machine)) return;
+                if (!result.ok) {
+                    String message = result.errorMessage == null ? "Could not clear attention." : result.errorMessage;
+                    setStatus(message);
+                    maybePromptForPasswordAfterFailure(machine, message, "Retry",
+                        () -> acknowledgeAttentionThenAttach(machine, remoteSession, origin));
+                    return;
+                }
+                attachRemoteSession(machine, remoteSession, origin, false);
+            });
+        });
     }
 
     private void openRemoteAttachTerminal(@NonNull GhostexMachine machine,

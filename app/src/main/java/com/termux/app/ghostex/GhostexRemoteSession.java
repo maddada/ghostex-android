@@ -21,12 +21,31 @@ public final class GhostexRemoteSession {
     public final String providerSessionName;
     public final String agent;
     public final String agentIcon;
+    public final String agentName;
+    public final String globalRef;
+    public final String kind;
     public final String lastInteractionAt;
+    public final String lastActiveAt;
+    public final String primaryTitle;
+    public final String surface;
+    public final String terminalTitle;
+    public final String titleSource;
+    public final String trustedResumeTitle;
+    public final String updatedAt;
+    public final String zmxName;
     public final boolean isFocused;
+    public final boolean isFavorite;
+    public final boolean isPinned;
+    public final boolean isPrimaryTitleTerminalTitle;
     public final boolean isSleeping;
+    public final boolean isTemporaryTitle;
     public final String nativePaneState;
     public final String providerSessionState;
     public final boolean isLive;
+    public final boolean visibleInSidebarByDefault;
+    public final String attentionEnteredAt;
+    public final boolean attentionAcknowledged;
+    public final GhostexRemoteSessionActions actions;
 
     /*
     CDXC:AndroidSidebar 2026-05-17-10:43:
@@ -88,6 +107,12 @@ public final class GhostexRemoteSession {
     CDXC:AndroidRemoteSessions 2026-05-29-07:19:
     Normalize provider-disabled sessions to `persistence-disabled`, not generic
     `disabled`, so remote inventory names the disabled capability directly.
+
+    CDXC:AndroidRemoteSessions 2026-06-04-03:33:
+    gxserver owns presentation metadata and action eligibility. Preserve those
+    CLI fields on Android rows so mobile, iOS, TUI, and agent orchestration can
+    render status and decide whether to acknowledge attention without duplicating
+    lifecycle, title-trust, or action-availability rules in each client.
     */
     public GhostexRemoteSession(String alias, String sessionId, String projectId, String title,
                                 String projectName, String projectPath, String activity,
@@ -127,6 +152,27 @@ public final class GhostexRemoteSession {
                                  String agent, String agentIcon, String lastInteractionAt,
                                  boolean isFocused, boolean isSleeping, String nativePaneState,
                                  String providerSessionState, boolean isLive) {
+        this(alias, sessionId, projectId, groupId, title, projectName, projectPath, activity,
+            status, provider, providerSessionName, agent, agentIcon, lastInteractionAt,
+            isFocused, isSleeping, nativePaneState, providerSessionState, isLive,
+            "", "", "", "", "", "", "", "", "", "", "", false, false, false,
+            false, false, "", false, GhostexRemoteSessionActions.empty());
+    }
+
+    private GhostexRemoteSession(String alias, String sessionId, String projectId, String groupId,
+                                 String title, String projectName, String projectPath, String activity,
+                                 String status, String provider, String providerSessionName,
+                                 String agent, String agentIcon, String lastInteractionAt,
+                                 boolean isFocused, boolean isSleeping, String nativePaneState,
+                                 String providerSessionState, boolean isLive,
+                                 String agentName, String globalRef, String kind,
+                                 String lastActiveAt, String primaryTitle, String surface,
+                                 String terminalTitle, String titleSource, String trustedResumeTitle,
+                                 String updatedAt, String zmxName, boolean isFavorite,
+                                 boolean isPinned, boolean isPrimaryTitleTerminalTitle,
+                                 boolean isTemporaryTitle, boolean visibleInSidebarByDefault,
+                                 String attentionEnteredAt, boolean attentionAcknowledged,
+                                 GhostexRemoteSessionActions actions) {
         this.alias = alias;
         this.sessionId = sessionId;
         this.projectId = projectId;
@@ -140,12 +186,31 @@ public final class GhostexRemoteSession {
         this.providerSessionName = providerSessionName;
         this.agent = agent;
         this.agentIcon = agentIcon;
+        this.agentName = agentName;
+        this.globalRef = globalRef;
+        this.kind = kind;
         this.lastInteractionAt = lastInteractionAt;
+        this.lastActiveAt = lastActiveAt;
+        this.primaryTitle = primaryTitle;
+        this.surface = surface;
+        this.terminalTitle = terminalTitle;
+        this.titleSource = titleSource;
+        this.trustedResumeTitle = trustedResumeTitle;
+        this.updatedAt = updatedAt;
+        this.zmxName = zmxName;
         this.isFocused = isFocused;
+        this.isFavorite = isFavorite;
+        this.isPinned = isPinned;
+        this.isPrimaryTitleTerminalTitle = isPrimaryTitleTerminalTitle;
         this.nativePaneState = normalizedNativePaneState(nativePaneState, isSleeping, activity, status);
         this.providerSessionState = normalizedProviderSessionState(providerSessionState);
         this.isLive = isLive;
         this.isSleeping = isSleeping && !isLive;
+        this.isTemporaryTitle = isTemporaryTitle;
+        this.visibleInSidebarByDefault = visibleInSidebarByDefault;
+        this.attentionEnteredAt = attentionEnteredAt;
+        this.attentionAcknowledged = attentionAcknowledged;
+        this.actions = actions == null ? GhostexRemoteSessionActions.empty() : actions;
     }
 
     @Nullable
@@ -161,6 +226,7 @@ public final class GhostexRemoteSession {
         String activity = normalizedSessionState(firstNonEmpty(trimmedJsonValue(json, "activity"),
             trimmedJsonValue(json, "activityState"), trimmedJsonValue(json, "activityStatus")));
         String groupId = trimmedJsonValue(json, "groupId");
+        JSONObject attention = json.optJSONObject("attention");
         boolean legacySleeping = json.optBoolean("isSleeping", "sleeping".equals(status) || "sleep".equals(status));
         String nativePaneState = normalizedNativePaneState(trimmedJsonValue(json, "nativePaneState"), legacySleeping, activity, status);
         String providerSessionState = normalizedProviderSessionState(trimmedJsonValue(json, "providerSessionState"));
@@ -186,7 +252,26 @@ public final class GhostexRemoteSession {
             legacySleeping,
             nativePaneState,
             providerSessionState,
-            isLive
+            isLive,
+            trimmedJsonValue(json, "agentName"),
+            trimmedJsonValue(json, "globalRef"),
+            trimmedJsonValue(json, "kind"),
+            trimmedJsonValue(json, "lastActiveAt"),
+            trimmedJsonValue(json, "primaryTitle"),
+            trimmedJsonValue(json, "surface"),
+            trimmedJsonValue(json, "terminalTitle"),
+            trimmedJsonValue(json, "titleSource"),
+            trimmedJsonValue(json, "trustedResumeTitle"),
+            trimmedJsonValue(json, "updatedAt"),
+            trimmedJsonValue(json, "zmxName"),
+            json.optBoolean("isFavorite", false),
+            json.optBoolean("isPinned", false),
+            json.optBoolean("isPrimaryTitleTerminalTitle", false),
+            json.optBoolean("isTemporaryTitle", false),
+            json.optBoolean("visibleInSidebarByDefault", false),
+            attention == null ? "" : trimmedJsonValue(attention, "enteredAt"),
+            attention != null && attention.optBoolean("acknowledged", false),
+            GhostexRemoteSessionActions.fromJson(json.optJSONObject("actions"))
         );
     }
 
@@ -302,6 +387,53 @@ public final class GhostexRemoteSession {
 
     private static String aliasFromSessionId(String sessionId) {
         return sessionId.length() <= 4 ? sessionId : sessionId.substring(0, 4);
+    }
+
+    public static final class GhostexRemoteSessionActions {
+        public final boolean acknowledgeAttention;
+        public final boolean attach;
+        public final boolean focus;
+        public final boolean kill;
+        public final boolean readText;
+        public final boolean sendMessage;
+        public final boolean sendText;
+        public final boolean sleep;
+        public final boolean wake;
+
+        private GhostexRemoteSessionActions(boolean acknowledgeAttention, boolean attach,
+                                            boolean focus, boolean kill, boolean readText,
+                                            boolean sendMessage, boolean sendText,
+                                            boolean sleep, boolean wake) {
+            this.acknowledgeAttention = acknowledgeAttention;
+            this.attach = attach;
+            this.focus = focus;
+            this.kill = kill;
+            this.readText = readText;
+            this.sendMessage = sendMessage;
+            this.sendText = sendText;
+            this.sleep = sleep;
+            this.wake = wake;
+        }
+
+        static GhostexRemoteSessionActions empty() {
+            return new GhostexRemoteSessionActions(false, false, false, false,
+                false, false, false, false, false);
+        }
+
+        static GhostexRemoteSessionActions fromJson(@Nullable JSONObject json) {
+            if (json == null) return empty();
+            return new GhostexRemoteSessionActions(
+                json.optBoolean("acknowledgeAttention", false),
+                json.optBoolean("attach", false),
+                json.optBoolean("focus", false),
+                json.optBoolean("kill", false),
+                json.optBoolean("readText", false),
+                json.optBoolean("sendMessage", false),
+                json.optBoolean("sendText", false),
+                json.optBoolean("sleep", false),
+                json.optBoolean("wake", false)
+            );
+        }
     }
 
 }
