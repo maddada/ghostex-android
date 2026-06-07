@@ -1613,7 +1613,7 @@ public final class GhostexAndroidController {
             return;
         }
         String remoteCommand = GhostexSshCommandBuilder.attachRemoteCommand(remoteSession);
-        String sessionName = remoteSession.alias + " · " + (remoteSession.title.isEmpty() ? "Ghostex" : remoteSession.title);
+        String sessionName = remoteSession.alias + " · " + (remoteSession.displayTitle.isEmpty() ? "Ghostex" : remoteSession.displayTitle);
         GhostexFileLogger.log(activity, "attach", sessionLogTag, "creating remote terminal machine=" + machine.displayLabel() +
             " sessionId=" + remoteSession.sessionId + " alias=" + remoteSession.alias +
             " log=" + GhostexFileLogger.shareableLogPath(activity));
@@ -1976,7 +1976,7 @@ public final class GhostexAndroidController {
             if (canRunRemoteSidebarAction(openerMachine, "refreshing sessions")) refreshSessionInventory(null);
         }));
         actions.add(new GhostexAction("Details", "Show provider and project metadata.", false, () -> showSessionDetails(openerMachine, session)));
-        showActionSheet(session.title.isEmpty() ? "Ghostex Session" : session.title,
+        showActionSheet(session.displayTitle.isEmpty() ? "Ghostex Session" : session.displayTitle,
             "Session " + session.alias + " · " + session.displayStatus(), actions);
     }
 
@@ -2059,7 +2059,7 @@ public final class GhostexAndroidController {
                                           @NonNull GhostexRemoteSession session) {
         showConfirmation("Kill remote session?",
             "This stops the selected Ghostex session on the connected machine.",
-            session.alias + " · " + blankToDash(session.title),
+            session.alias + " · " + blankToDash(session.displayTitle),
             "Kill",
             true,
             () -> runRemoteSessionAction("kill", openerMachine, session));
@@ -2341,7 +2341,7 @@ public final class GhostexAndroidController {
         details.add(new GhostexDetail("ZMX session", blankToDash(session.providerSessionName)));
         details.add(new GhostexDetail("Agent", blankToDash(session.agent)));
         details.add(new GhostexDetail("Session id", blankToDash(session.sessionId)));
-        showDetailsPanel(session.alias + " · " + blankToDash(session.title),
+        showDetailsPanel(session.alias + " · " + blankToDash(session.displayTitle),
             "Remote session metadata from the Ghostex CLI.", details);
     }
 

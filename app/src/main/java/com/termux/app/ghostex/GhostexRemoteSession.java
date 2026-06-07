@@ -13,6 +13,8 @@ public final class GhostexRemoteSession {
     public final String projectId;
     public final String groupId;
     public final String title;
+    public final String displayTitle;
+    public final String displayTitleTooltip;
     public final String projectName;
     public final String projectPath;
     public final String activity;
@@ -113,6 +115,9 @@ public final class GhostexRemoteSession {
     CLI fields on Android rows so mobile, iOS, TUI, and agent orchestration can
     render status and decide whether to acknowledge attention without duplicating
     lifecycle, title-trust, or action-availability rules in each client.
+
+    CDXC:GxserverSessionTitles 2026-06-07-09:33:
+    Android displays gxserver's `displayTitle` while keeping raw `title` for rename and session actions. Mobile must not decide unsynced markers or placeholder title text from title provenance fields.
     */
     public GhostexRemoteSession(String alias, String sessionId, String projectId, String title,
                                 String projectName, String projectPath, String activity,
@@ -155,7 +160,7 @@ public final class GhostexRemoteSession {
         this(alias, sessionId, projectId, groupId, title, projectName, projectPath, activity,
             status, provider, providerSessionName, agent, agentIcon, lastInteractionAt,
             isFocused, isSleeping, nativePaneState, providerSessionState, isLive,
-            "", "", "", "", "", "", "", "", "", "", "", false, false, false,
+            title, title, "", "", "", "", "", "", "", "", "", "", "", false, false, false,
             false, false, "", false, GhostexRemoteSessionActions.empty());
     }
 
@@ -165,6 +170,7 @@ public final class GhostexRemoteSession {
                                  String agent, String agentIcon, String lastInteractionAt,
                                  boolean isFocused, boolean isSleeping, String nativePaneState,
                                  String providerSessionState, boolean isLive,
+                                 String displayTitle, String displayTitleTooltip,
                                  String agentName, String globalRef, String kind,
                                  String lastActiveAt, String primaryTitle, String surface,
                                  String terminalTitle, String titleSource, String trustedResumeTitle,
@@ -178,6 +184,9 @@ public final class GhostexRemoteSession {
         this.projectId = projectId;
         this.groupId = groupId;
         this.title = title;
+        this.displayTitle = displayTitle == null || displayTitle.trim().isEmpty() ? title : displayTitle.trim();
+        this.displayTitleTooltip = displayTitleTooltip == null || displayTitleTooltip.trim().isEmpty()
+            ? this.displayTitle : displayTitleTooltip.trim();
         this.projectName = projectName;
         this.projectPath = projectPath;
         this.activity = activity;
@@ -233,12 +242,14 @@ public final class GhostexRemoteSession {
         boolean isLive = json.has("isLive")
             ? json.optBoolean("isLive", false)
             : deriveIsLive(nativePaneState, providerSessionState, legacySleeping, activity, status);
+        String rawTitle = firstNonEmpty(trimmedJsonValue(json, "title"), trimmedJsonValue(json, "primaryTitle"), trimmedJsonValue(json, "terminalTitle"));
+        String displayTitle = firstNonEmpty(trimmedJsonValue(json, "displayTitle"), rawTitle);
         return new GhostexRemoteSession(
             alias,
             sessionId,
             firstNonEmpty(trimmedJsonValue(json, "projectId"), groupId),
             groupId,
-            firstNonEmpty(trimmedJsonValue(json, "title"), trimmedJsonValue(json, "primaryTitle"), trimmedJsonValue(json, "terminalTitle")),
+            rawTitle,
             firstNonEmpty(trimmedJsonValue(json, "projectName"), trimmedJsonValue(json, "groupTitle")),
             trimmedJsonValue(json, "projectPath"),
             activity,
@@ -253,6 +264,8 @@ public final class GhostexRemoteSession {
             nativePaneState,
             providerSessionState,
             isLive,
+            displayTitle,
+            firstNonEmpty(trimmedJsonValue(json, "displayTitleTooltip"), displayTitle),
             trimmedJsonValue(json, "agentName"),
             trimmedJsonValue(json, "globalRef"),
             trimmedJsonValue(json, "kind"),

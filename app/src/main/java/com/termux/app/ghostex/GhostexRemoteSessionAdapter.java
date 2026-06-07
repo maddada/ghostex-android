@@ -318,7 +318,7 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         ImageView sleepingIcon = (ImageView) row.findViewWithTag("sleepingIcon");
         if (session == null) return row;
 
-        title.setText(session.title.isEmpty() ? "Ghostex Session" : session.title);
+        title.setText(session.displayTitle.isEmpty() ? "Ghostex Session" : session.displayTitle);
         agentIcon.setImageResource(GhostexSessionAgentIcon.drawableResForSession(session));
         agentIcon.setColorFilter(GhostexSessionAgentIcon.tintColorForSession(session));
         int statusColor = statusColor(session);
