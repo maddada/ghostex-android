@@ -74,8 +74,12 @@ public final class TerminalView extends View {
     CDXC:AndroidTerminalScroll 2026-06-08-13:42:
     Agent CLI status updates can repaint the terminal without adding meaningful output, and Android users must be able to scroll through history without selecting text first.
     Keep auto-follow only when the view is already very close to the live bottom; otherwise preserve the user's scrollback position across screen updates.
+
+    CDXC:AndroidTerminalScroll 2026-06-08-16:11:
+    Auto-follow must be stricter than a near-bottom threshold.
+    Follow output only when the terminal is on the actual live bottom row; even one row of user scrollback should keep the view anchored away from new output.
     */
-    static final int AUTO_SCROLL_BOTTOM_FOLLOW_THRESHOLD_ROWS = 3;
+    static final int AUTO_SCROLL_LIVE_BOTTOM_TOP_ROW = 0;
 
     float mScaleFactor = 1.f;
     final GestureAndScaleRecognizer mGestureRecognizer;
@@ -512,7 +516,7 @@ public final class TerminalView extends View {
     }
 
     static boolean shouldFollowOutputAtScrollPosition(int topRow) {
-        return topRow >= -AUTO_SCROLL_BOTTOM_FOLLOW_THRESHOLD_ROWS;
+        return topRow == AUTO_SCROLL_LIVE_BOTTOM_TOP_ROW;
     }
 
     /** This must be called by the hosting activity in {@link Activity#onContextMenuClosed(Menu)}

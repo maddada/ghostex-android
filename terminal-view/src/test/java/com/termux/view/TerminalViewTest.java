@@ -13,12 +13,12 @@ public class TerminalViewTest {
     }
 
     @Test
-    public void shouldFollowOutputAtScrollPositionWhenVeryCloseToBottom() {
-        assertTrue(TerminalView.shouldFollowOutputAtScrollPosition(-TerminalView.AUTO_SCROLL_BOTTOM_FOLLOW_THRESHOLD_ROWS));
+    public void shouldNotFollowOutputAtScrollPositionWhenScrolledOneRowFromBottom() {
+        assertFalse(TerminalView.shouldFollowOutputAtScrollPosition(-1));
     }
 
     @Test
     public void shouldNotFollowOutputAtScrollPositionWhenUserScrolledAwayFromBottom() {
-        assertFalse(TerminalView.shouldFollowOutputAtScrollPosition(-TerminalView.AUTO_SCROLL_BOTTOM_FOLLOW_THRESHOLD_ROWS - 1));
+        assertFalse(TerminalView.shouldFollowOutputAtScrollPosition(-4));
     }
 }
