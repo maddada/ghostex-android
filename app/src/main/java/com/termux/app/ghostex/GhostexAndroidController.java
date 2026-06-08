@@ -795,7 +795,7 @@ public final class GhostexAndroidController {
         CDXC:AndroidSettings 2026-05-21-08:52:
         Terminal Behavior needs readable spacing and hierarchy inside the in-drawer settings page. Render each option as a dedicated row with bold title text, dimmer subtitle copy, and separated rows so adjacent settings do not run together on phone screens.
         */
-        behaviorCard.addView(settingCheckBox("Auto scroll", "Follow new terminal output unless text is selected.",
+        behaviorCard.addView(settingCheckBox("Auto scroll", "Follow new terminal output when already near the bottom.",
             terminalSettingsStore.isAutoScrollEnabled(), checked -> {
                 terminalSettingsStore.setAutoScrollEnabled(checked);
                 applyAutoScrollSettingToCurrentTerminal();

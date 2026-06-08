@@ -70,6 +70,13 @@ public final class TerminalView extends View {
     int mTopRow;
     int[] mDefaultSelectors = new int[]{-1,-1,-1,-1};
 
+    /*
+    CDXC:AndroidTerminalScroll 2026-06-08-13:42:
+    Agent CLI status updates can repaint the terminal without adding meaningful output, and Android users must be able to scroll through history without selecting text first.
+    Keep auto-follow only when the view is already very close to the live bottom; otherwise preserve the user's scrollback position across screen updates.
+    */
+    static final int AUTO_SCROLL_BOTTOM_FOLLOW_THRESHOLD_ROWS = 3;
+
     float mScaleFactor = 1.f;
     final GestureAndScaleRecognizer mGestureRecognizer;
 
@@ -464,17 +471,19 @@ public final class TerminalView extends View {
         int rowsInHistory = mEmulator.getScreen().getActiveTranscriptRows();
         if (mTopRow < -rowsInHistory) mTopRow = -rowsInHistory;
 
-        if (isSelectingText() || mEmulator.isAutoScrollDisabled()) {
+        boolean selectingText = isSelectingText();
+        boolean preservingScrollPosition = selectingText || mEmulator.isAutoScrollDisabled() || !shouldFollowOutputAtScrollPosition(mTopRow);
+        if (preservingScrollPosition) {
 
             // Do not scroll when selecting text.
             int rowShift = mEmulator.getScrollCounter();
             if (-mTopRow + rowShift > rowsInHistory) {
                 // .. unless we're hitting the end of history transcript, in which
                 // case we abort text selection and scroll to end.
-                if (isSelectingText())
+                if (selectingText)
                     stopTextSelectionMode();
 
-                if (mEmulator.isAutoScrollDisabled()) {
+                if (mEmulator.isAutoScrollDisabled() || !shouldFollowOutputAtScrollPosition(mTopRow)) {
                     mTopRow = -rowsInHistory;
                     skipScrolling = true;
                 }
@@ -500,6 +509,10 @@ public final class TerminalView extends View {
 
         invalidate();
         if (mAccessibilityEnabled) setContentDescription(getText());
+    }
+
+    static boolean shouldFollowOutputAtScrollPosition(int topRow) {
+        return topRow >= -AUTO_SCROLL_BOTTOM_FOLLOW_THRESHOLD_ROWS;
     }
 
     /** This must be called by the hosting activity in {@link Activity#onContextMenuClosed(Menu)}
