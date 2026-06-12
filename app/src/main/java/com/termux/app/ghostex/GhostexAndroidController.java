@@ -316,10 +316,10 @@ public final class GhostexAndroidController {
     same SSHJ transport as reconnect, attach, create, rename, and file upload,
     so they must not depend on phone-side SSH packages.
 
-    CDXC:AndroidConnectionManagement 2026-05-17-13:50:
-    Check connection is a repair workflow for SSH reachability, credentials,
-    Ghostex CLI, zmx, and the bridge inventory endpoint. It should not block on
-    local Termux SSH tools now that SSHJ owns the phone-side transport.
+	    CDXC:AndroidConnectionManagement 2026-05-17-13:50:
+	    Check connection is a repair workflow for SSH reachability, credentials,
+	    Ghostex CLI, zmx, and the gxserver inventory endpoint. It should not block on
+	    local Termux SSH tools now that SSHJ owns the phone-side transport.
 
     CDXC:AndroidConnectionManagement 2026-05-17-13:52:
     Saved-machine readiness checks can run while users inspect multiple Macs.
@@ -2721,10 +2721,16 @@ public final class GhostexAndroidController {
     private void showPhoneSetupActions() {
         final AlertDialog[] setupDialog = new AlertDialog[1];
         LinearLayout container = verticalContainer(dp(18));
-        container.setBackgroundColor(GHOSTEX_BG);
-
-        addTitle(container, "Setup", 18);
-        addBody(container, "Ghostex Android connects with its built-in SSH transport, then asks the Mac-hosted Ghostex CLI for ZMX sessions. No phone-side SSH package install is required.");
+	        container.setBackgroundColor(GHOSTEX_BG);
+	
+	        addTitle(container, "Setup", 18);
+	        /*
+	        CDXC:AndroidRemoteSessions 2026-06-11-23:52:
+	        Android setup copy must name the real runtime dependency: the phone SSHes
+	        to the Mac and the Ghostex CLI reads gxserver. The macOS app can be closed
+	        while session statuses still refresh from the daemon.
+	        */
+	        addBody(container, "Ghostex Android connects with its built-in SSH transport, then asks the Mac-hosted Ghostex CLI and GX server for ZMX sessions. No phone-side SSH package install is required, and the macOS app does not need to be open.");
 
         LinearLayout transportCard = card();
         addTitle(transportCard, "Connection path", 15);

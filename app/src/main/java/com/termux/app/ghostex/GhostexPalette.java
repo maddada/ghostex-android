@@ -24,7 +24,11 @@ public final class GhostexPalette {
     public static final int INPUT_BACKGROUND = 0xFF0E0E0E;
     public static final int BUTTON = 0xFF7DD3FC;
     public static final int DANGER = 0xFFE85C5C;
-    public static final int STATUS_ATTENTION = 0xFF22C55E;
+    /*
+    CDXC:AndroidStatusIndicators 2026-06-12-02:32:
+    Done and attention status must use #95d7f6 instead of bright green so Android drawer rows match macOS and iOS status surfaces.
+    */
+    public static final int STATUS_ATTENTION = 0xFF95D7F6;
     public static final int STATUS_WORKING = 0xFFF59E0B;
     public static final int STATUS_SLEEPING = 0xFF6E7684;
 

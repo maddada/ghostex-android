@@ -32,11 +32,17 @@ public final class GhostexSessionInventoryClient {
     actions when the Ghostex CLI exposes them. Use stable session ids and
     structured `--title=` arguments so rename stays safe for titles with spaces.
 
-    CDXC:AndroidRemoteSessions 2026-05-17-18:24:
-    Inventory and remote action commands are non-interactive, but they still
-    depend on the Mac-hosted Ghostex CLI contract. Use the app-owned SSHJ
-    transport directly so reconnect behaves like attach without requiring
-    phone-side Termux package binaries.
+	    CDXC:AndroidRemoteSessions 2026-05-17-18:24:
+	    Inventory and remote action commands are non-interactive, but they still
+	    depend on the Mac-hosted Ghostex CLI contract. Use the app-owned SSHJ
+	    transport directly so reconnect behaves like attach without requiring
+	    phone-side Termux package binaries.
+
+	    CDXC:AndroidRemoteSessions 2026-06-11-23:52:
+	    Android status refresh must require only SSH plus the remote gxserver-backed
+	    Ghostex CLI. `ghostex sessions --json` owns the list/status contract through
+	    gxserver list and presentation snapshot APIs, so the macOS app does not need
+	    to be running for agent session states to appear.
 
     CDXC:AndroidConnectionRecovery 2026-05-17-12:32:
     SSHJ and the remote Ghostex CLI usually report actionable failures. Merge
@@ -360,8 +366,8 @@ public final class GhostexSessionInventoryClient {
         String text = output == null ? "" : output.trim();
         /*
         CDXC:AndroidConnectionRecovery 2026-05-17-14:25:
-        Android-facing Ghostex CLI actions now exit nonzero when the macOS
-        bridge reports `{ ok: false }`. Prefer the JSON error field over raw
+	        Android-facing Ghostex CLI actions now exit nonzero when the gxserver
+	        CLI contract reports `{ ok: false }`. Prefer the JSON error field over raw
         payload text so drawer recovery and password prompts remain readable
         after focus, rename, or lifecycle action failures.
 

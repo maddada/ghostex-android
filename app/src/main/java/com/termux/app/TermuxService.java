@@ -113,7 +113,11 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     boolean mWantsToStop = false;
 
     private static final String LOG_TAG = "TermuxService";
-    private static final int GHOSTEX_NOTIFICATION_DONE_COLOR = 0xFF22C55E;
+    /*
+    CDXC:AndroidNotifications 2026-06-12-02:32:
+    Done and attention notification rows/counts use #95d7f6 instead of the prior bright green, matching the Android drawer and the macOS/iOS app status token.
+    */
+    private static final int GHOSTEX_NOTIFICATION_DONE_COLOR = 0xFF95D7F6;
     private static final int GHOSTEX_NOTIFICATION_WORKING_COLOR = 0xFFF59E0B;
     private static final int GHOSTEX_NOTIFICATION_MUTED_COLOR = 0xFF9CA3AF;
 
@@ -1027,7 +1031,7 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         CDXC:AndroidNotifications 2026-05-21-23:52:
         Android's status bar/notification header can expose one count, not two
         custom colored status icons. Publish one prioritized number through the
-        platform notification count and tint: done green, otherwise working
+        platform notification count and tint: done #95d7f6, otherwise working
         orange, otherwise running gray.
         */
         GhostexServiceNotificationFormatter.StatusIndicator indicator =

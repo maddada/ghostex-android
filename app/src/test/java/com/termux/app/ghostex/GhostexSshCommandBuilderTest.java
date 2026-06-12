@@ -42,10 +42,10 @@ public final class GhostexSshCommandBuilderTest {
     Mac so readiness checks catch the first-release ZMX dependency before users
     try to attach.
 
-    CDXC:AndroidConnectionManagement 2026-05-17-18:20:
-    Check connection should use the Mac-side `ghostex android-check --json`
-    contract so Android validates zmx settings and bridge inventory through one
-    release-supported CLI command.
+	    CDXC:AndroidConnectionManagement 2026-05-17-18:20:
+	    Check connection should use the Mac-side `ghostex android-check --json`
+	    contract so Android validates zmx settings and gxserver inventory through one
+	    release-supported CLI command.
 
     CDXC:AndroidConnectionManagement 2026-05-17-14:16:
     IPv6 SSH destinations should use the same bracketed host form as Settings

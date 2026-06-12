@@ -18,9 +18,10 @@ public final class GhostexSessionCardFormatterTest {
     The long-press Details sheet should reuse the drawer's Last Active wording
     while providing an explicit Unknown value when the CLI has no timestamp.
 
-    CDXC:AndroidSidebar 2026-05-17-14:44:
-    Android should keep Last Active labels and sorting if the Mac bridge emits
-    ISO timestamps with explicit local offsets instead of UTC `Z` strings.
+	    CDXC:AndroidSidebar 2026-05-17-14:44:
+	    Android should keep Last Active labels and sorting if the gxserver CLI
+	    payload emits ISO timestamps with explicit local offsets instead of UTC `Z`
+	    strings.
     */
 
     @Test

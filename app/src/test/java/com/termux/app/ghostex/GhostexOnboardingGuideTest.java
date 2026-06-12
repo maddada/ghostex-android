@@ -25,10 +25,11 @@ public final class GhostexOnboardingGuideTest {
         Assert.assertTrue(tutorial.contains("Session persistence to zmx"));
         Assert.assertTrue(tutorial.contains("built-in Setup panel"));
         Assert.assertTrue(tutorial.contains("You do not need to install SSH packages on the phone."));
-        Assert.assertTrue(tutorial.contains("display name, host, username, and SSH port"));
-        Assert.assertTrue(tutorial.contains("reconnect to the last selected machine"));
-        Assert.assertTrue(tutorial.contains("asks the Ghostex CLI for the live sidebar list"));
-        Assert.assertTrue(tutorial.contains("ZMX-backed session"));
+	        Assert.assertTrue(tutorial.contains("display name, host, username, and SSH port"));
+	        Assert.assertTrue(tutorial.contains("reconnect to the last selected machine"));
+	        Assert.assertTrue(tutorial.contains("asks the Ghostex CLI for the GX server-backed session list"));
+	        Assert.assertTrue(tutorial.contains("macOS app does not need to stay open"));
+	        Assert.assertTrue(tutorial.contains("ZMX-backed session"));
     }
 
     @Test

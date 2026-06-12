@@ -44,11 +44,16 @@ public final class GhostexSshCommandBuilder {
     and the Ghostex CLI. Print explicit missing-tool markers so Android can show
     the existing actionable missing-CLI and missing-ZMX recovery copy.
 
-    CDXC:AndroidConnectionManagement 2026-05-17-18:20:
-    The Mac-side Ghostex CLI owns the release readiness contract for Android.
-    Check connection must call `ghostex android-check --json` so it verifies
-    zmx is installed, Ghostex settings are set to zmx, and the running bridge can
-    return the same sidebar inventory Android will render.
+	    CDXC:AndroidConnectionManagement 2026-05-17-18:20:
+	    The Mac-side Ghostex CLI owns the release readiness contract for Android.
+	    Check connection must call `ghostex android-check --json` so it verifies
+	    zmx is installed, Ghostex settings are set to zmx, and gxserver can return
+	    the same sidebar inventory Android will render without the macOS app.
+
+	    CDXC:AndroidRemoteSessions 2026-06-11-23:52:
+	    Session inventory and status commands still run through SSH on the Mac, but
+	    their data source is gxserver. Do not route list/status through a macOS app
+	    bridge or a sidebar persistence fallback.
 
     CDXC:AndroidConnectionManagement 2026-05-17-14:16:
     SSH command construction should use the same bracketed IPv6 destination that

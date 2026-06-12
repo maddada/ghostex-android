@@ -78,11 +78,11 @@ public final class GhostexRemoteSession {
     groups those rows by stable session id so project-level destructive actions
     cannot target unrelated sessions from malformed or sparse CLI payloads.
 
-    CDXC:AndroidSidebar 2026-05-17-20:03:
-    The Mac bridge can expose sidebar grouping as `groupId` and `groupTitle`
-    when project metadata is sparse. Use those as fallback Android project
-    metadata so the drawer still mirrors the macOS sidebar grouping instead of
-    demoting valid grouped rows to per-session Ungrouped buckets.
+	    CDXC:AndroidSidebar 2026-05-17-20:03:
+	    The gxserver CLI payload can expose sidebar grouping as `groupId` and
+	    `groupTitle` when project metadata is sparse. Use those as fallback Android
+	    project metadata so the drawer still mirrors desktop grouping instead of
+	    demoting valid grouped rows to per-session Ungrouped buckets.
 
     CDXC:AndroidSidebar 2026-05-19-11:05:
     The Mac inventory can expose `agentIcon` directly. Keep it alongside the

@@ -316,6 +316,7 @@ public final class GhostexRemoteSessionAdapterTest {
 
         Assert.assertNotNull(session);
         Assert.assertEquals("attention", session.displayStatus());
+        Assert.assertEquals(0xFF95D7F6, GhostexPalette.STATUS_ATTENTION);
         Assert.assertEquals(GhostexPalette.STATUS_ATTENTION, GhostexRemoteSessionAdapter.statusColor(session));
     }
 

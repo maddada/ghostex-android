@@ -29,10 +29,11 @@ public final class GhostexSessionCardFormatter {
     so the Android long-press Details sheet exposes useful remote debugging
     context without drifting from the macOS sidebar's recency wording.
 
-    CDXC:AndroidSidebar 2026-05-17-14:44:
-    Last Active is release-critical sidebar metadata. Parse standard ISO
-    timestamps with either UTC `Z` or explicit offsets so Android keeps recency
-    sorting and labels even if the Mac bridge emits local-offset ISO strings.
+	    CDXC:AndroidSidebar 2026-05-17-14:44:
+	    Last Active is release-critical sidebar metadata. Parse standard ISO
+	    timestamps with either UTC `Z` or explicit offsets so Android keeps recency
+	    sorting and labels even if the gxserver CLI payload emits local-offset ISO
+	    strings.
 
     CDXC:AndroidSidebar 2026-05-19-10:15:
     Drawer session rows no longer render buildMeta output. Keep this formatter
