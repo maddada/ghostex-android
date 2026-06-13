@@ -216,9 +216,13 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final String ARG_ACTIVITY_RECREATED = "activity_recreated";
     public static final String ACTION_OPEN_GHOSTEX_REMOTE_SESSION = "io.ghostex.action.OPEN_REMOTE_SESSION";
     public static final String EXTRA_GHOSTEX_REMOTE_SESSION_ID = "io.ghostex.extra.REMOTE_SESSION_ID";
+    static final String LEGACY_TERMUX_EXTRA_FAILSAFE_SESSION = "com.termux.app.failsafe_session";
 
     private static final String LOG_TAG = "TermuxActivity";
     private String mPendingGhostexNotificationSessionId;
+    private boolean mPendingGhostexEmptyServiceConnect;
+    @Nullable
+    private Intent mPendingGhostexEmptyServiceIntent;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -337,6 +341,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             addTermuxActivityRootViewGlobalLayoutListener();
 
         registerTermuxActivityBroadcastReceiver();
+
+        handlePendingGhostexEmptyServiceConnectIfNeeded();
     }
 
     @Override
@@ -449,29 +455,15 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         if (mTermuxService.isTermuxSessionsEmpty()) {
             if (mIsVisible) {
-                TermuxInstaller.setupBootstrapIfNeeded(TermuxActivity.this, () -> {
-                    if (mTermuxService == null) return; // Activity might have been destroyed.
-                    try {
-                        boolean launchFailsafe = false;
-                        if (intent != null && intent.getExtras() != null) {
-                            launchFailsafe = intent.getExtras().getBoolean(TERMUX_ACTIVITY.EXTRA_FAILSAFE_SESSION, false);
-                        }
-                        /*
-                         * CDXC:AndroidRemoteSessions 2026-05-17-17:05:
-                         * Ghostex Android should not create a local Termux shell
-                         * on startup. The terminal surface is an attach surface
-                         * for remote Ghostex/ZMX sessions, with local terminals
-                         * created only by explicit Ghostex flows such as phone
-                         * setup or remote attach.
-                         */
-                        if (mGhostexAndroidController == null)
-                            mTermuxTerminalSessionActivityClient.addNewSession(launchFailsafe, null);
-                        if (mGhostexAndroidController != null)
-                            mGhostexAndroidController.onTermuxServiceConnected();
-                    } catch (WindowManager.BadTokenException e) {
-                        // Activity finished - ignore.
-                    }
-                });
+                handleEmptyTermuxServiceConnected(intent);
+            } else if (mGhostexAndroidController != null) {
+                /*
+                CDXC:AndroidStartupRecovery 2026-06-13-01:42:
+                Ghostex Android intentionally starts with zero local Termux sessions while the remote-session controller reconnects or shows recovery UI.
+                If the service binding callback wins the race before onStart marks the Activity visible, keep the Activity alive and finish startup after visibility instead of treating the empty service as a background launch to close.
+                */
+                mPendingGhostexEmptyServiceConnect = true;
+                mPendingGhostexEmptyServiceIntent = intent == null ? null : new Intent(intent);
             } else {
                 // The service connected while not in foreground - just bail out.
                 finishActivityIfNotFinishing();
@@ -480,20 +472,71 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             // If termux was started from launcher "New session" shortcut and activity is recreated,
             // then the original intent will be re-delivered, resulting in a new session being re-added
             // each time.
-            if (mGhostexAndroidController == null && !mIsActivityRecreated && intent != null && Intent.ACTION_RUN.equals(intent.getAction())) {
+            boolean launchedFailsafeSession = false;
+            if (!mIsActivityRecreated && shouldLaunchFailsafeSession(intent)) {
+                mTermuxTerminalSessionActivityClient.addNewSession(true, null);
+                launchedFailsafeSession = true;
+            } else if (mGhostexAndroidController == null && !mIsActivityRecreated && intent != null && Intent.ACTION_RUN.equals(intent.getAction())) {
                 // Android 7.1 app shortcut from res/xml/shortcuts.xml.
                 boolean isFailSafe = intent.getBooleanExtra(TERMUX_ACTIVITY.EXTRA_FAILSAFE_SESSION, false);
                 mTermuxTerminalSessionActivityClient.addNewSession(isFailSafe, null);
             } else if (!mTermuxService.isTermuxSessionsEmpty()) {
                 mTermuxTerminalSessionActivityClient.setCurrentSession(mTermuxTerminalSessionActivityClient.getCurrentStoredSessionOrLast());
             }
-            if (mGhostexAndroidController != null)
+            if (mGhostexAndroidController != null && !launchedFailsafeSession)
                 mGhostexAndroidController.onTermuxServiceConnected();
         }
 
         // Update the {@link TerminalSession} and {@link TerminalEmulator} clients.
         mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
         handleGhostexNotificationIntent(intent);
+    }
+
+    private void handlePendingGhostexEmptyServiceConnectIfNeeded() {
+        if (!mPendingGhostexEmptyServiceConnect || !mIsVisible || mTermuxService == null)
+            return;
+
+        if (!mTermuxService.isTermuxSessionsEmpty()) {
+            mPendingGhostexEmptyServiceConnect = false;
+            mPendingGhostexEmptyServiceIntent = null;
+            return;
+        }
+
+        Intent pendingIntent = mPendingGhostexEmptyServiceIntent;
+        mPendingGhostexEmptyServiceConnect = false;
+        mPendingGhostexEmptyServiceIntent = null;
+        handleEmptyTermuxServiceConnected(pendingIntent);
+    }
+
+    private void handleEmptyTermuxServiceConnected(@Nullable Intent intent) {
+        TermuxInstaller.setupBootstrapIfNeeded(TermuxActivity.this, () -> {
+            if (mTermuxService == null) return; // Activity might have been destroyed.
+            try {
+                boolean launchFailsafe = shouldLaunchFailsafeSession(intent);
+                /*
+                CDXC:AndroidStartupRecovery 2026-06-13-01:42:
+                Explicit failsafe launches are recovery shells, including adb starts used when a saved SSH machine makes normal reconnect unusable.
+                Honor the failsafe extra before the Ghostex controller so users can open a local Termux failsafe session instead of being routed back into the broken remote startup path.
+
+                CDXC:AndroidRemoteSessions 2026-05-17-17:05:
+                Ghostex Android should not create a local Termux shell on normal startup.
+                The terminal surface is an attach surface for remote Ghostex/ZMX sessions, with local terminals created only by explicit Ghostex flows such as phone setup, remote attach, or failsafe recovery.
+                */
+                if (launchFailsafe || mGhostexAndroidController == null) {
+                    mTermuxTerminalSessionActivityClient.addNewSession(launchFailsafe, null);
+                    return;
+                }
+                mGhostexAndroidController.onTermuxServiceConnected();
+            } catch (WindowManager.BadTokenException e) {
+                // Activity finished - ignore.
+            }
+        });
+    }
+
+    static boolean shouldLaunchFailsafeSession(@Nullable Intent intent) {
+        if (intent == null || intent.getExtras() == null) return false;
+        return intent.getExtras().getBoolean(TERMUX_ACTIVITY.EXTRA_FAILSAFE_SESSION, false) ||
+            intent.getExtras().getBoolean(LEGACY_TERMUX_EXTRA_FAILSAFE_SESSION, false);
     }
 
     @Override

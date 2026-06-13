@@ -791,6 +791,12 @@ task verifyGhostexReleaseRuntimeSurface() {
         invalidation, or file corruption. Release builds must keep the vault
         and controller self-healing those entries so reconnect falls back to
         explicit credential recovery instead of stale saved-password state.
+
+        CDXC:AndroidStartupRecovery 2026-06-13-01:42:
+        Ghostex startup may bind TermuxService before Activity visibility while
+        there are intentionally no local terminal sessions. Gate the deferred
+        empty-service path and explicit failsafe handling so startup recovery
+        cannot regress into silent self-finish behavior.
         */
         def activityFile = new File(projectDir, "src/main/java/com/termux/app/TermuxActivity.java")
         def activityText = activityFile.getText("UTF-8")
@@ -812,15 +818,17 @@ task verifyGhostexReleaseRuntimeSurface() {
         def emptySessionBlock = emptySessionIndex >= 0 && nonEmptySessionIndex > emptySessionIndex
             ? activityText.substring(emptySessionIndex, nonEmptySessionIndex)
             : ""
-        def startupSessionIndex = emptySessionBlock.indexOf("mTermuxTerminalSessionActivityClient.addNewSession(launchFailsafe, null);")
-        if (startupSessionIndex < 0) {
-            throw new GradleException("Ghostex Android startup gate could not find the empty-service addNewSession path.")
-        }
-        def guardedStartupSession = emptySessionBlock
-            .substring(Math.max(0, startupSessionIndex - 180), startupSessionIndex)
-            .contains("if (mGhostexAndroidController == null)")
-        if (!guardedStartupSession || !emptySessionBlock.contains("mGhostexAndroidController.onTermuxServiceConnected();")) {
-            throw new GradleException("Ghostex Android startup must not create a default local Termux shell while the Ghostex controller is active.")
+        if (!emptySessionBlock.contains("handleEmptyTermuxServiceConnected(intent);") ||
+            !emptySessionBlock.contains("mPendingGhostexEmptyServiceConnect = true;") ||
+            !emptySessionBlock.contains("mPendingGhostexEmptyServiceIntent = intent == null ? null : new Intent(intent);") ||
+            !activityText.contains("private void handlePendingGhostexEmptyServiceConnectIfNeeded()") ||
+            !activityText.contains("private void handleEmptyTermuxServiceConnected(@Nullable Intent intent)") ||
+            !activityText.contains("static boolean shouldLaunchFailsafeSession(@Nullable Intent intent)") ||
+            !activityText.contains("boolean launchedFailsafeSession = false;") ||
+            !activityText.contains("mGhostexAndroidController != null && !launchedFailsafeSession") ||
+            !activityText.contains("mTermuxTerminalSessionActivityClient.addNewSession(launchFailsafe, null);") ||
+            !activityText.contains("mGhostexAndroidController.onTermuxServiceConnected();")) {
+            throw new GradleException("Ghostex Android startup must defer pre-visible empty-service binding, honor failsafe recovery, and avoid creating a default local Termux shell during normal Ghostex startup.")
         }
 
         def applicationFile = new File(projectDir, "src/main/java/com/termux/app/TermuxApplication.java")
