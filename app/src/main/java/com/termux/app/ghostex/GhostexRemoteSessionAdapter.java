@@ -32,6 +32,8 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
     private OnProjectActionsListener projectActionsListener;
     private OnProjectToggleListener projectToggleListener;
     private OnProjectSessionListToggleListener projectSessionListToggleListener;
+    private OnSessionClickListener sessionClickListener;
+    private OnSessionLongClickListener sessionLongClickListener;
 
     public interface OnProjectSessionCreateListener {
         void onCreateProjectSession(@NonNull GhostexDrawerItem item);
@@ -47,6 +49,14 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
 
     public interface OnProjectSessionListToggleListener {
         void onToggleProjectSessionList(@NonNull GhostexDrawerItem item);
+    }
+
+    public interface OnSessionClickListener {
+        void onClickSession(@NonNull GhostexRemoteSession session);
+    }
+
+    public interface OnSessionLongClickListener {
+        boolean onLongClickSession(@NonNull GhostexRemoteSession session);
     }
 
     /*
@@ -169,6 +179,14 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
 
     public void setOnProjectSessionListToggleListener(@Nullable OnProjectSessionListToggleListener listener) {
         projectSessionListToggleListener = listener;
+    }
+
+    public void setOnSessionClickListener(@Nullable OnSessionClickListener listener) {
+        sessionClickListener = listener;
+    }
+
+    public void setOnSessionLongClickListener(@Nullable OnSessionLongClickListener listener) {
+        sessionLongClickListener = listener;
     }
 
     public void setCurrentMachineId(@Nullable String value) {
@@ -337,6 +355,13 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         row.setContentDescription(GhostexAccessibilityCopy.join(title.getText().toString(),
             statusDescription(session),
             "Tap to attach. Long press for actions."));
+        row.setOnClickListener(view -> {
+            if (sessionClickListener != null) {
+                sessionClickListener.onClickSession(session);
+            }
+        });
+        row.setOnLongClickListener(view ->
+            sessionLongClickListener != null && sessionLongClickListener.onLongClickSession(session));
         return row;
     }
 
