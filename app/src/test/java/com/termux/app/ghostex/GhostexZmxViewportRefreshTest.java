@@ -34,6 +34,51 @@ public final class GhostexZmxViewportRefreshTest {
         Assert.assertEquals(6, GhostexZmxViewportRefresh.MAX_VIEWPORT_READY_ATTEMPTS);
     }
 
+    @Test
+    public void delayedAttachRefreshRequiresVisibleRenderedTerminal() {
+        /*
+        CDXC:AndroidRemoteAttach 2026-06-22-05:24:
+        A remote ZMX attach can spend several seconds opening SSH and starting `ghostex attach`.
+        The automatic refresh should not start its final two-second delay until the selected Android terminal is measured, visible, backed by an emulator, and has rendered remote output.
+        */
+        Assert.assertFalse(GhostexZmxViewportRefresh.isAttachVisibleForDelayedRefresh(
+            0, 480, true, true, true, true));
+        Assert.assertFalse(GhostexZmxViewportRefresh.isAttachVisibleForDelayedRefresh(
+            320, 480, false, true, true, true));
+        Assert.assertFalse(GhostexZmxViewportRefresh.isAttachVisibleForDelayedRefresh(
+            320, 480, true, false, true, true));
+        Assert.assertFalse(GhostexZmxViewportRefresh.isAttachVisibleForDelayedRefresh(
+            320, 480, true, true, false, true));
+        Assert.assertFalse(GhostexZmxViewportRefresh.isAttachVisibleForDelayedRefresh(
+            320, 480, true, true, true, false));
+        Assert.assertTrue(GhostexZmxViewportRefresh.isAttachVisibleForDelayedRefresh(
+            320, 480, true, true, true, true));
+    }
+
+    @Test
+    public void delayedAttachRefreshUsesTwoSecondPostVisibleDelay() {
+        Assert.assertEquals(2000L, GhostexZmxViewportRefresh.POST_ATTACH_REFRESH_DELAY_MS);
+        Assert.assertEquals(250L, GhostexZmxViewportRefresh.ATTACH_VISIBLE_RETRY_DELAY_MS);
+        Assert.assertTrue(GhostexZmxViewportRefresh.MAX_ATTACH_VISIBLE_ATTEMPTS > GhostexZmxViewportRefresh.MAX_VIEWPORT_READY_ATTEMPTS);
+    }
+
+    @Test
+    public void renderedContentCheckDoesNotRequireReadingSpecificTerminalText() {
+        Assert.assertFalse(GhostexZmxViewportRefresh.hasVisibleTerminalContent(null));
+        Assert.assertFalse(GhostexZmxViewportRefresh.hasVisibleTerminalContent(" \r\n\t"));
+        Assert.assertTrue(GhostexZmxViewportRefresh.hasVisibleTerminalContent("zmx"));
+    }
+
+    @Test
+    public void pageUpPageDownSequencesMatchManualRefreshNudge() {
+        /*
+        CDXC:AndroidRemoteAttach 2026-06-22-05:46:
+        The delayed automatic ZMX attach refresh should use the same PageUp/PageDown bytes as the manual Android refresh control after the post-visible delay, so users do not need to press those keys themselves to repair stale dimensions.
+        */
+        Assert.assertEquals("\u001B[5~", GhostexZmxViewportRefresh.pageUpSequence(false, false));
+        Assert.assertEquals("\u001B[6~", GhostexZmxViewportRefresh.pageDownSequence(false, false));
+    }
+
     private GhostexRemoteSession session(String provider) {
         return new GhostexRemoteSession(
             "1",

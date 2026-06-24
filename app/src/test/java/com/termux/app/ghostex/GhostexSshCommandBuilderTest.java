@@ -173,6 +173,7 @@ public final class GhostexSshCommandBuilderTest {
         assertMissingSessionIdFails(() -> GhostexSshCommandBuilder.attachRemoteCommand(session));
         assertMissingSessionIdFails(() -> GhostexSshCommandBuilder.buildSessionActionCommand(machine(), session, "sleep", false));
         assertMissingSessionIdFails(() -> GhostexSshCommandBuilder.buildRenameSessionCommand(machine(), session, "Title", false));
+        assertMissingSessionIdFails(() -> GhostexSshCommandBuilder.sendEnterRemoteCommand(session));
     }
 
     @Test
@@ -186,6 +187,21 @@ public final class GhostexSshCommandBuilderTest {
             GhostexSshCommandBuilder.shellQuote(session.projectId) + " --title=" +
             GhostexSshCommandBuilder.shellQuote("Ship Android's polish") + " --json", command);
         Assert.assertFalse(command.contains("rename-session " + GhostexSshCommandBuilder.shellQuote(session.alias)));
+    }
+
+    @Test
+    public void sendEnterUsesStableProjectScopedSessionId() {
+        /*
+        CDXC:GxserverSessionTitle 2026-06-23-08:40:
+        Android's first-prompt auto-name trigger should submit Enter through the Mac-hosted Ghostex CLI with the same project-scoped session identity as attach, focus, and rename commands.
+        */
+        GhostexRemoteSession session = session();
+
+        String command = GhostexSshCommandBuilder.sendEnterRemoteCommand(session);
+
+        Assert.assertEquals("ghostex send-enter --session-id " +
+            GhostexSshCommandBuilder.shellQuote(session.sessionId) + " --project-id " +
+            GhostexSshCommandBuilder.shellQuote(session.projectId) + " --json", command);
     }
 
     @Test

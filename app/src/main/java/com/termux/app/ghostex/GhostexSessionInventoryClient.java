@@ -189,6 +189,28 @@ public final class GhostexSessionInventoryClient {
         }
     }
 
+    public Result sendEnter(@NonNull GhostexMachine machine, @Nullable String password,
+                            @NonNull GhostexRemoteSession session) {
+        /*
+        CDXC:GxserverSessionTitle 2026-06-23-08:40:
+        First-prompt auto-naming remains a gxserver-rs flow. Android's inventory client only submits the Enter requested by the projected staged-command flag and never sends prompt text, generated titles, or provider-specific rename content.
+        */
+        try {
+            GhostexSshTransport.CommandResult commandResult = runRemoteGhostexCommand(machine, password,
+                GhostexSshCommandBuilder.sendEnterRemoteCommand(session),
+                "zmx=none op=sendEnter");
+            if (commandResult.timedOut) {
+                return Result.failure(GhostexRemoteTimeoutCopy.sessionAction("send Enter"));
+            }
+            if (commandResult.exitCode != 0) {
+                return Result.failure(summarizeFailure(commandResult.output, hasPassword(password)));
+            }
+            return Result.success(new ArrayList<>());
+        } catch (Exception error) {
+            return Result.failure(error.getMessage() == null ? "Could not submit the staged Ghostex command." : error.getMessage());
+        }
+    }
+
     public Result createSession(@NonNull GhostexMachine machine, @Nullable String password,
                                 @NonNull GhostexDrawerItem projectItem) {
         try {

@@ -21,6 +21,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.MimeTypeMap;
+import android.widget.AbsListView;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -71,7 +72,7 @@ public final class GhostexAndroidController {
     private static final int GHOSTEX_MUTED = GhostexPalette.MUTED;
     private static final int GHOSTEX_ACCENT = GhostexPalette.BUTTON;
     private static final int GHOSTEX_DANGER = GhostexPalette.DANGER;
-    private static final long ZMX_SWITCH_REFRESH_DELAY_MS = 250L;
+    private static final long ZMX_SWITCH_REFRESH_DELAY_MS = GhostexZmxViewportRefresh.POST_ATTACH_REFRESH_DELAY_MS;
 
     private final TermuxActivity activity;
     private final GhostexMachineStore machineStore;
@@ -86,6 +87,7 @@ public final class GhostexAndroidController {
     private final ArrayList<GhostexDrawerItem> drawerItems = new ArrayList<>();
     private final HashSet<String> collapsedProjectKeys = new HashSet<>();
     private final HashSet<String> collapsedProjectSessionListKeys = new HashSet<>();
+    private final HashSet<String> submittedFirstPromptTitleCommandEnterKeys = new HashSet<>();
     private final LinkedHashMap<String, TerminalSession> warmSessions =
         new LinkedHashMap<>(WARM_SESSION_LIMIT + 1, 0.75f, true);
     private final HashMap<String, String> sessionPasswords = new HashMap<>();
@@ -101,6 +103,8 @@ public final class GhostexAndroidController {
     private LinearLayout machinesPageList;
     private LinearLayout settingsPageList;
     private DrawerLayout.DrawerListener drawerSessionPollListener;
+    private GhostexDrawerScrollAnchor lastSessionDrawerScrollAnchor;
+    private String lastSessionDrawerScrollAnchorMachineId;
     private boolean tutorialShowing;
     private boolean requiredMachineSetupInProgress;
     private boolean sessionStatusPollInFlight;
@@ -599,6 +603,17 @@ public final class GhostexAndroidController {
         sessionAdapter.setOnProjectToggleListener(this::toggleProjectCollapsed);
         sessionAdapter.setOnProjectSessionListToggleListener(this::toggleProjectSessionListCollapsed);
         sessionsList.setAdapter(sessionAdapter);
+        sessionsList.setOnScrollListener(new AbsListView.OnScrollListener() {
+            @Override
+            public void onScrollStateChanged(AbsListView view, int scrollState) {}
+
+            @Override
+            public void onScroll(AbsListView view, int firstVisibleItem, int visibleItemCount,
+                                 int totalItemCount) {
+                if (!isSessionDrawerVisible() || visibleItemCount <= 0 || totalItemCount <= 0) return;
+                rememberDrawerScrollAnchor(captureDrawerScrollAnchor());
+            }
+        });
         sessionsList.setOnItemClickListener((parent, view, position, id) -> {
             GhostexDrawerItem item = sessionAdapter.getItem(position);
             if (item != null && item.type == GhostexDrawerItem.Type.SESSION && item.session != null) {
@@ -684,6 +699,7 @@ public final class GhostexAndroidController {
         if (machinesPage != null) machinesPage.setVisibility(View.GONE);
         if (settingsPage != null) settingsPage.setVisibility(View.GONE);
         if (sessionsPage != null) sessionsPage.setVisibility(View.VISIBLE);
+        restoreRememberedDrawerScrollAnchorAfterLayout();
         if (activity.getDrawer().isDrawerOpen(Gravity.LEFT)) {
             refreshSessionInventoryFromSessionStatusPoll();
             scheduleSessionStatusPolling();
@@ -696,9 +712,16 @@ public final class GhostexAndroidController {
             @Override
             public void onDrawerOpened(@NonNull View drawerView) {
                 if (drawerView.getId() != R.id.left_drawer) return;
+                restoreRememberedDrawerScrollAnchorAfterLayout();
                 if (!shouldPollSessionStatus()) return;
                 refreshSessionInventoryFromSessionStatusPoll();
                 scheduleSessionStatusPolling();
+            }
+
+            @Override
+            public void onDrawerClosed(@NonNull View drawerView) {
+                if (drawerView.getId() != R.id.left_drawer) return;
+                rememberDrawerScrollAnchor(captureDrawerScrollAnchor());
             }
         };
         drawer.addDrawerListener(drawerSessionPollListener);
@@ -1360,6 +1383,40 @@ public final class GhostexAndroidController {
         setStatus(successStatusOverride != null ? successStatusOverride : sessions.isEmpty()
             ? "Connected. No ZMX-backed Ghostex sessions are running."
             : "Connected to " + machine.displayLabel());
+        submitStagedFirstPromptTitleCommands(machine, sessions);
+    }
+
+    private void submitStagedFirstPromptTitleCommands(@NonNull GhostexMachine machine,
+                                                      @NonNull List<GhostexRemoteSession> sessions) {
+        /*
+        CDXC:GxserverSessionTitle 2026-06-23-08:40:
+        Android should mirror macOS first-prompt auto-naming without owning any generation logic. When gxserver-rs marks a session's staged rename command ready, submit exactly one Enter per machine/project/session from the mobile inventory path and leave title decisions and staged text in gxserver-rs.
+        */
+        for (GhostexRemoteSession session : sessions) {
+            if (!session.shouldSubmitStagedFirstPromptTitleCommand) continue;
+            String submitKey = firstPromptTitleCommandSubmitKey(machine, session);
+            if (submitKey.isEmpty() || !submittedFirstPromptTitleCommandEnterKeys.add(submitKey)) continue;
+            executor.execute(() -> {
+                String password = readPassword(machine);
+                GhostexSessionInventoryClient.Result result = inventoryClient.sendEnter(machine, password, session);
+                if (result.ok) return;
+                mainHandler.post(() -> {
+                    if (!isSessionDrawerVisible()) return;
+                    setStatus(result.errorMessage == null
+                        ? "Could not submit the staged Ghostex command."
+                        : result.errorMessage);
+                });
+            });
+        }
+    }
+
+    @NonNull
+    private String firstPromptTitleCommandSubmitKey(@NonNull GhostexMachine machine,
+                                                   @NonNull GhostexRemoteSession session) {
+        String sessionId = session.sessionId == null ? "" : session.sessionId.trim();
+        if (sessionId.isEmpty()) return "";
+        String projectId = session.projectId == null ? "" : session.projectId.trim();
+        return machine.id + ":" + projectId + ":" + sessionId;
     }
 
     public void activateRemoteSessionFromNotification(@NonNull String sessionId) {
@@ -1488,20 +1545,29 @@ public final class GhostexAndroidController {
     }
 
     private void notifyDrawerAdapterPreservingScroll(@Nullable GhostexDrawerScrollAnchor scrollAnchor) {
+        /*
+        CDXC:AndroidSidebar 2026-06-23-08:27:
+        Background notification polling can rebuild drawerItems while the sidebar is closed, and Android's ListView may not preserve hidden scroll state across that adapter update.
+        Keep a machine-scoped remembered anchor from the last visible sidebar viewport and reapply it on drawer open and after refreshes so repeated sidebar opens do not drift.
+        */
+        if (scrollAnchor != null) rememberDrawerScrollAnchor(scrollAnchor);
+        GhostexDrawerScrollAnchor effectiveAnchor = scrollAnchor != null
+            ? scrollAnchor
+            : currentMachineDrawerScrollAnchor();
         sessionAdapter.notifyDataSetChanged();
-        restoreDrawerScrollAnchor(scrollAnchor);
+        restoreDrawerScrollAnchor(effectiveAnchor);
     }
 
     @Nullable
     private GhostexDrawerScrollAnchor captureDrawerScrollAnchor() {
         if (sessionsList == null) return null;
-        int position = sessionsList.getFirstVisiblePosition();
-        if (position < 0 || position >= drawerItems.size()) return null;
-        String anchorKey = GhostexDrawerScrollAnchor.keyForItem(drawerItems.get(position));
-        if (anchorKey == null) return null;
-        View child = sessionsList.getChildAt(0);
-        int offset = child == null ? 0 : child.getTop();
-        return new GhostexDrawerScrollAnchor(anchorKey, offset);
+        return GhostexDrawerScrollAnchor.firstStableVisibleAnchor(drawerItems,
+            sessionsList.getFirstVisiblePosition(),
+            sessionsList.getChildCount(),
+            childIndex -> {
+                View child = sessionsList.getChildAt(childIndex);
+                return child == null ? 0 : child.getTop();
+            });
     }
 
     private void restoreDrawerScrollAnchor(@Nullable GhostexDrawerScrollAnchor scrollAnchor) {
@@ -1513,6 +1579,26 @@ public final class GhostexAndroidController {
                 return;
             }
         }
+    }
+
+    private void rememberDrawerScrollAnchor(@Nullable GhostexDrawerScrollAnchor scrollAnchor) {
+        if (scrollAnchor == null) return;
+        String machineId = machineStore.getLastMachineId();
+        if (machineId == null || machineId.trim().isEmpty()) return;
+        lastSessionDrawerScrollAnchor = scrollAnchor;
+        lastSessionDrawerScrollAnchorMachineId = machineId;
+    }
+
+    @Nullable
+    private GhostexDrawerScrollAnchor currentMachineDrawerScrollAnchor() {
+        String machineId = machineStore.getLastMachineId();
+        if (machineId == null || !machineId.equals(lastSessionDrawerScrollAnchorMachineId)) return null;
+        return lastSessionDrawerScrollAnchor;
+    }
+
+    private void restoreRememberedDrawerScrollAnchorAfterLayout() {
+        if (sessionsList == null) return;
+        sessionsList.post(() -> restoreDrawerScrollAnchor(currentMachineDrawerScrollAnchor()));
     }
 
     private void attachRemoteSession(@NonNull GhostexRemoteSession remoteSession) {
@@ -1564,7 +1650,7 @@ public final class GhostexAndroidController {
             sessionAdapter.setActiveSession(machine, remoteSession);
             activity.getTermuxTerminalSessionClient().setCurrentSession(warmSession);
             applyAutoScrollSettingToCurrentTerminal();
-            refreshZmxViewportOnceAfterSessionSwitch(warmSession, remoteSession, origin.reason("warm-session-reuse"), 1);
+            refreshZmxViewportOnceAfterSessionSwitch(warmSession, remoteSession, 1);
             activity.getDrawer().closeDrawers();
             return;
         }
@@ -1635,7 +1721,7 @@ public final class GhostexAndroidController {
         sessionAdapter.setActiveSession(machine, remoteSession);
         activity.getTermuxTerminalSessionClient().setCurrentSession(terminalSession);
         applyAutoScrollSettingToCurrentTerminal();
-        refreshZmxViewportOnceAfterSessionSwitch(terminalSession, remoteSession, origin.reason("new-ssh-attach"), 1);
+        refreshZmxViewportOnceAfterSessionSwitch(terminalSession, remoteSession, 1);
         activity.getDrawer().closeDrawers();
         setStatus("Attached to " + remoteSession.alias + " on " + machine.displayLabel() + ". Logs: " +
             GhostexFileLogger.shareableLogPath(activity));
@@ -1643,40 +1729,71 @@ public final class GhostexAndroidController {
 
     private void refreshZmxViewportOnceAfterSessionSwitch(@NonNull TerminalSession terminalSession,
                                                          @NonNull GhostexRemoteSession remoteSession,
-                                                         @NonNull String reason,
                                                          int attempt) {
+        /*
+        CDXC:AndroidRemoteAttach 2026-06-22-05:46:
+        Automatic ZMX attach repair must match the manual refresh affordance: after the selected attach terminal is visible and has rendered remote output, wait two seconds, then force a size update and send both the private ZMX redraw OSC and a PageUp/PageDown nudge. Sending the key nudge before ZMX is visible is ineffective because the attach CLI has not yet accepted terminal input.
+        */
         if (!GhostexZmxViewportRefresh.shouldRefreshAfterSessionSwitch(remoteSession, terminalSession)) {
             return;
         }
-        String sessionLogTag = zmxSessionLogTag(remoteSession);
-        GhostexFileLogger.log(activity, "attach", sessionLogTag,
-            "zmx viewport refresh scheduled reason=" + reason + " attempt=" + attempt +
-                " delayMs=" + ZMX_SWITCH_REFRESH_DELAY_MS);
         mainHandler.postDelayed(() -> {
             if (destroyed || activity.getCurrentSession() != terminalSession ||
                 !GhostexZmxViewportRefresh.shouldRefreshAfterSessionSwitch(remoteSession, terminalSession)) {
-                GhostexFileLogger.log(activity, "attach", sessionLogTag,
-                    "zmx viewport refresh skipped reason=" + reason);
                 return;
             }
-            if (!GhostexZmxViewportRefresh.isTerminalViewReadyForRefresh(
-                activity.getTerminalView().getWidth(), activity.getTerminalView().getHeight())) {
-                if (attempt < GhostexZmxViewportRefresh.MAX_VIEWPORT_READY_ATTEMPTS) {
-                    GhostexFileLogger.log(activity, "attach", sessionLogTag,
-                        "zmx viewport refresh waiting for terminal view size reason=" + reason +
-                            " attempt=" + attempt);
-                    refreshZmxViewportOnceAfterSessionSwitch(terminalSession, remoteSession, reason, attempt + 1);
-                } else {
-                    GhostexFileLogger.log(activity, "attach", sessionLogTag,
-                        "zmx viewport refresh skipped because terminal view stayed size 0 reason=" + reason);
+            if (!isZmxAttachVisibleForDelayedRefresh(terminalSession)) {
+                if (attempt < GhostexZmxViewportRefresh.MAX_ATTACH_VISIBLE_ATTEMPTS) {
+                    refreshZmxViewportOnceAfterSessionSwitch(terminalSession, remoteSession, attempt + 1);
                 }
+                return;
+            }
+            sendZmxViewportRefreshAfterVisibleAttach(terminalSession, remoteSession);
+        }, GhostexZmxViewportRefresh.ATTACH_VISIBLE_RETRY_DELAY_MS);
+    }
+
+    private void sendZmxViewportRefreshAfterVisibleAttach(@NonNull TerminalSession terminalSession,
+                                                         @NonNull GhostexRemoteSession remoteSession) {
+        mainHandler.postDelayed(() -> {
+            if (destroyed || activity.getCurrentSession() != terminalSession ||
+                !GhostexZmxViewportRefresh.shouldRefreshAfterSessionSwitch(remoteSession, terminalSession) ||
+                !isZmxAttachVisibleForDelayedRefresh(terminalSession)) {
                 return;
             }
             activity.getTerminalView().updateSize();
             terminalSession.write(GhostexZmxViewportRefresh.sequence());
-            GhostexFileLogger.log(activity, "attach", sessionLogTag,
-                "zmx viewport refresh sent reason=" + reason);
+            sendTerminalPageUpPageDownNudge(terminalSession);
         }, ZMX_SWITCH_REFRESH_DELAY_MS);
+    }
+
+    private void sendTerminalPageUpPageDownNudge(@NonNull TerminalSession terminalSession) {
+        TerminalEmulator emulator = terminalSession.getEmulator();
+        boolean cursorApplicationMode = emulator != null && emulator.isCursorKeysApplicationMode();
+        boolean keypadApplicationMode = emulator != null && emulator.isKeypadApplicationMode();
+        String pageUp = GhostexZmxViewportRefresh.pageUpSequence(cursorApplicationMode, keypadApplicationMode);
+        String pageDown = GhostexZmxViewportRefresh.pageDownSequence(cursorApplicationMode, keypadApplicationMode);
+        if (pageUp != null) terminalSession.write(pageUp);
+        if (pageDown != null) terminalSession.write(pageDown);
+    }
+
+    private boolean isZmxAttachVisibleForDelayedRefresh(@NonNull TerminalSession terminalSession) {
+        TerminalEmulator emulator = terminalSession.getEmulator();
+        int terminalWidth = activity.getTerminalView().getWidth();
+        int terminalHeight = activity.getTerminalView().getHeight();
+        boolean terminalViewReady = GhostexZmxViewportRefresh.isTerminalViewReadyForRefresh(
+            terminalWidth, terminalHeight);
+        return GhostexZmxViewportRefresh.isAttachVisibleForDelayedRefresh(
+            terminalWidth,
+            terminalHeight,
+            activity.getTerminalView().isShown(),
+            activity.isVisible(),
+            emulator != null,
+            terminalViewReady && hasRenderedTerminalOutput(emulator));
+    }
+
+    private boolean hasRenderedTerminalOutput(@Nullable TerminalEmulator emulator) {
+        if (emulator == null) return false;
+        return GhostexZmxViewportRefresh.hasVisibleTerminalContent(emulator.getScreen().getTranscriptText());
     }
 
     @NonNull
@@ -1691,19 +1808,8 @@ public final class GhostexAndroidController {
     }
 
     private enum GhostexAttachOrigin {
-        SIDEBAR("sidebar"),
-        NOTIFICATION("notification");
-
-        private final String label;
-
-        GhostexAttachOrigin(@NonNull String label) {
-            this.label = label;
-        }
-
-        @NonNull
-        String reason(@NonNull String baseReason) {
-            return label + "-" + baseReason;
-        }
+        SIDEBAR,
+        NOTIFICATION
     }
 
     private void handleFileUploadResult(@NonNull TerminalSession targetSession,

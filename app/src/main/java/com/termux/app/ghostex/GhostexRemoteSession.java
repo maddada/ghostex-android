@@ -47,6 +47,7 @@ public final class GhostexRemoteSession {
     public final boolean visibleInSidebarByDefault;
     public final String attentionEnteredAt;
     public final boolean attentionAcknowledged;
+    public final boolean shouldSubmitStagedFirstPromptTitleCommand;
     public final GhostexRemoteSessionActions actions;
 
     /*
@@ -118,6 +119,9 @@ public final class GhostexRemoteSession {
 
     CDXC:GxserverSessionTitles 2026-06-07-09:33:
     Android displays gxserver's `displayTitle` while keeping raw `title` for rename and session actions. Mobile must not decide unsynced markers or placeholder title text from title provenance fields.
+
+    CDXC:GxserverSessionTitle 2026-06-23-08:40:
+    gxserver-rs owns first-prompt auto-name generation and stages the provider rename command. Android only preserves the presentation flag that asks the mobile shell bridge to submit the staged command with Enter.
     */
     public GhostexRemoteSession(String alias, String sessionId, String projectId, String title,
                                 String projectName, String projectPath, String activity,
@@ -161,7 +165,7 @@ public final class GhostexRemoteSession {
             status, provider, providerSessionName, agent, agentIcon, lastInteractionAt,
             isFocused, isSleeping, nativePaneState, providerSessionState, isLive,
             title, title, "", "", "", "", "", "", "", "", "", "", "", false, false, false,
-            false, false, "", false, GhostexRemoteSessionActions.empty());
+            false, false, "", false, false, GhostexRemoteSessionActions.empty());
     }
 
     private GhostexRemoteSession(String alias, String sessionId, String projectId, String groupId,
@@ -178,6 +182,7 @@ public final class GhostexRemoteSession {
                                  boolean isPinned, boolean isPrimaryTitleTerminalTitle,
                                  boolean isTemporaryTitle, boolean visibleInSidebarByDefault,
                                  String attentionEnteredAt, boolean attentionAcknowledged,
+                                 boolean shouldSubmitStagedFirstPromptTitleCommand,
                                  GhostexRemoteSessionActions actions) {
         this.alias = alias;
         this.sessionId = sessionId;
@@ -219,6 +224,7 @@ public final class GhostexRemoteSession {
         this.visibleInSidebarByDefault = visibleInSidebarByDefault;
         this.attentionEnteredAt = attentionEnteredAt;
         this.attentionAcknowledged = attentionAcknowledged;
+        this.shouldSubmitStagedFirstPromptTitleCommand = shouldSubmitStagedFirstPromptTitleCommand;
         this.actions = actions == null ? GhostexRemoteSessionActions.empty() : actions;
     }
 
@@ -284,6 +290,7 @@ public final class GhostexRemoteSession {
             json.optBoolean("visibleInSidebarByDefault", false),
             attention == null ? "" : trimmedJsonValue(attention, "enteredAt"),
             attention != null && attention.optBoolean("acknowledged", false),
+            json.optBoolean("shouldSubmitStagedFirstPromptTitleCommand", false),
             GhostexRemoteSessionActions.fromJson(json.optJSONObject("actions"))
         );
     }

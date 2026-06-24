@@ -525,6 +525,13 @@ public abstract class TermuxSharedProperties {
      * @return Returns the internal value for value.
      */
     public static String getExtraKeysInternalPropertyValueFromValue(String value) {
+        /*
+        CDXC:AndroidSettings 2026-06-23-08:40:
+        Users who saved the old Ghostex default should receive the same Shift replacement as fresh installs. Migrate only the exact Ctrl-U default string so customized extra-keys layouts remain user-owned.
+        */
+        if (TermuxPropertyConstants.LEGACY_GHOSTEX_CTRL_U_EXTRA_KEYS.equals(value)) {
+            return TermuxPropertyConstants.DEFAULT_IVALUE_EXTRA_KEYS;
+        }
         return SharedProperties.getDefaultIfNullOrEmpty(value, TermuxPropertyConstants.DEFAULT_IVALUE_EXTRA_KEYS);
     }
 

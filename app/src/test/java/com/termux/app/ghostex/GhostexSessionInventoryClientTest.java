@@ -50,7 +50,7 @@ public final class GhostexSessionInventoryClientTest {
             "{\n" +
             "  \"ok\": true,\n" +
             "  \"sessions\": [\n" +
-            "    {\"alias\": 1, \"sessionId\": \"session-zmx\", \"title\": \"Ship Android\", \"sessionPersistenceProvider\": \"zmx\", \"sessionPersistenceName\": \"zmx-main\"},\n" +
+            "    {\"alias\": 1, \"sessionId\": \"session-zmx\", \"title\": \"Ship Android\", \"sessionPersistenceProvider\": \"zmx\", \"sessionPersistenceName\": \"zmx-main\", \"shouldSubmitStagedFirstPromptTitleCommand\": true},\n" +
             "    {\"alias\": 2, \"sessionId\": \"session-tmux\", \"title\": \"Skip\", \"sessionPersistenceProvider\": \"tmux\"}\n" +
             "  ]\n" +
             "}\n" +
@@ -62,6 +62,7 @@ public final class GhostexSessionInventoryClientTest {
         Assert.assertEquals("session-zmx", sessions.get(0).sessionId);
         Assert.assertEquals("Ship Android", sessions.get(0).title);
         Assert.assertEquals("zmx-main", sessions.get(0).providerSessionName);
+        Assert.assertTrue(sessions.get(0).shouldSubmitStagedFirstPromptTitleCommand);
     }
 
     @Test

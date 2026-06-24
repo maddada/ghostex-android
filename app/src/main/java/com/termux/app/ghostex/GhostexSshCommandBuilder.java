@@ -179,6 +179,17 @@ public final class GhostexSshCommandBuilder {
             " --title=" + shellQuote(title) + " --json";
     }
 
+    public static String sendEnterRemoteCommand(@NonNull GhostexRemoteSession session) {
+        /*
+        CDXC:GxserverSessionTitle 2026-06-23-08:40:
+        Android does not generate first-prompt titles or staged rename text. When gxserver-rs projects that a staged first-prompt rename command is ready, Android submits Enter through the Mac-hosted Ghostex CLI so gxserver remains the owner of title generation and session targeting.
+        */
+        String sessionId = requireSessionId(session);
+        String projectId = session.projectId == null ? "" : session.projectId.trim();
+        String projectFlag = projectId.isEmpty() ? "" : " --project-id " + shellQuote(projectId);
+        return "ghostex send-enter --session-id " + shellQuote(sessionId) + projectFlag + " --json";
+    }
+
     public static String createSessionRemoteCommand(@Nullable String projectId,
                                                     @Nullable String groupId) {
         /*

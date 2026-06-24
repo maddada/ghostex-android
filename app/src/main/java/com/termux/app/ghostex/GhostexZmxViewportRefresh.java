@@ -1,14 +1,20 @@
 package com.termux.app.ghostex;
 
+import android.view.KeyEvent;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.termux.terminal.KeyHandler;
 import com.termux.terminal.TerminalSession;
 
 public final class GhostexZmxViewportRefresh {
 
     private static final String REFRESH_SEQUENCE = "\u001B]1337;ZMX_REFRESH\u0007";
     public static final int MAX_VIEWPORT_READY_ATTEMPTS = 6;
+    public static final int MAX_ATTACH_VISIBLE_ATTEMPTS = 80;
+    public static final long ATTACH_VISIBLE_RETRY_DELAY_MS = 250L;
+    public static final long POST_ATTACH_REFRESH_DELAY_MS = 2000L;
 
     private GhostexZmxViewportRefresh() {}
 
@@ -39,6 +45,43 @@ public final class GhostexZmxViewportRefresh {
     */
     public static boolean isTerminalViewReadyForRefresh(int widthPixels, int heightPixels) {
         return widthPixels > 0 && heightPixels > 0;
+    }
+
+    /*
+    CDXC:AndroidRemoteAttach 2026-06-22-05:24:
+    The automatic ZMX viewport refresh must be a post-attach redraw, not an attach-start timer.
+    Wait until the selected Android terminal is visible, measured, has an emulator, and has rendered remote output, then wait about two seconds before sending the existing zmx refresh sequence.
+    Do not log terminal text while making this decision; only reduce the screen snapshot to a boolean.
+    */
+    public static boolean isAttachVisibleForDelayedRefresh(int widthPixels,
+                                                           int heightPixels,
+                                                           boolean terminalViewShown,
+                                                           boolean activityVisible,
+                                                           boolean emulatorAttached,
+                                                           boolean hasRenderedRemoteOutput) {
+        return isTerminalViewReadyForRefresh(widthPixels, heightPixels) &&
+            terminalViewShown &&
+            activityVisible &&
+            emulatorAttached &&
+            hasRenderedRemoteOutput;
+    }
+
+    public static boolean hasVisibleTerminalContent(@Nullable String terminalText) {
+        if (terminalText == null) return false;
+        for (int i = 0; i < terminalText.length(); i++) {
+            if (!Character.isWhitespace(terminalText.charAt(i))) return true;
+        }
+        return false;
+    }
+
+    @Nullable
+    public static String pageUpSequence(boolean cursorApplicationMode, boolean keypadApplicationMode) {
+        return KeyHandler.getCode(KeyEvent.KEYCODE_PAGE_UP, 0, cursorApplicationMode, keypadApplicationMode);
+    }
+
+    @Nullable
+    public static String pageDownSequence(boolean cursorApplicationMode, boolean keypadApplicationMode) {
+        return KeyHandler.getCode(KeyEvent.KEYCODE_PAGE_DOWN, 0, cursorApplicationMode, keypadApplicationMode);
     }
 
     @NonNull
