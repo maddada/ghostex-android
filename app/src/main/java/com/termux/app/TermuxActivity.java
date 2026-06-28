@@ -812,6 +812,53 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         handleDefaultBackRequest();
     }
 
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent event) {
+        if (shouldDismissGhostexDrawerFromTouch(event)) {
+            dismissGhostexDrawer();
+            return true;
+        }
+        return super.dispatchTouchEvent(event);
+    }
+
+    private boolean shouldDismissGhostexDrawerFromTouch(@NonNull MotionEvent event) {
+        /*
+        CDXC:AndroidSidebar 2026-06-13-00:40:
+        DrawerLayout normally handles scrim taps, but Ghostex's terminal surface
+        has custom touch handling. Dismiss the sidebar at the Activity boundary
+        when a new touch starts outside the drawer bounds so terminal gestures
+        cannot consume the outside-tap close intent.
+        */
+        if (event.getAction() != MotionEvent.ACTION_DOWN) return false;
+        if (!isGhostexDrawerLayoutInstalled() || !getDrawer().isDrawerOpen(Gravity.LEFT)) return false;
+        View drawer = findViewById(R.id.left_drawer);
+        if (drawer == null || drawer.getWidth() <= 0 || drawer.getHeight() <= 0) return false;
+        int[] drawerLocation = new int[2];
+        drawer.getLocationOnScreen(drawerLocation);
+        float x = event.getRawX();
+        float y = event.getRawY();
+        return x < drawerLocation[0] ||
+            x > drawerLocation[0] + drawer.getWidth() ||
+            y < drawerLocation[1] ||
+            y > drawerLocation[1] + drawer.getHeight();
+    }
+
+    public void dismissGhostexDrawer() {
+        DrawerLayout drawerLayout = getDrawer();
+        View drawerView = findViewById(R.id.left_drawer);
+        closeGhostexDrawerNow(drawerLayout, drawerView);
+        drawerLayout.post(() -> closeGhostexDrawerNow(drawerLayout, drawerView));
+        drawerLayout.postDelayed(() -> closeGhostexDrawerNow(drawerLayout, drawerView), 150);
+    }
+
+    private void closeGhostexDrawerNow(@NonNull DrawerLayout drawerLayout, @Nullable View drawerView) {
+        if (drawerView != null && drawerLayout.isDrawerOpen(drawerView)) {
+            drawerLayout.closeDrawer(drawerView);
+        } else {
+            drawerLayout.closeDrawers();
+        }
+    }
+
     public boolean handleGhostexBackRequest() {
         if (!isGhostexDrawerLayoutInstalled()) return false;
         /*

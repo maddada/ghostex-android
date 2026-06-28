@@ -598,21 +598,24 @@ public final class GhostexAndroidController {
             showProjectContextMenu(item, machineStore.getLastMachine()));
         sessionAdapter.setOnProjectToggleListener(this::toggleProjectCollapsed);
         sessionAdapter.setOnProjectSessionListToggleListener(this::toggleProjectSessionListCollapsed);
+        sessionAdapter.setOnSessionClickListener(session -> {
+            activity.dismissGhostexDrawer();
+            attachRemoteSession(session);
+        });
+        sessionAdapter.setOnSessionLongClickListener(session -> {
+            showSessionContextMenu(session, machineStore.getLastMachine());
+            return true;
+        });
         sessionsList.setAdapter(sessionAdapter);
         sessionsList.setOnItemClickListener((parent, view, position, id) -> {
             GhostexDrawerItem item = sessionAdapter.getItem(position);
-            if (item != null && item.type == GhostexDrawerItem.Type.SESSION && item.session != null) {
-                attachRemoteSession(item.session);
-            } else if (item != null && item.type == GhostexDrawerItem.Type.STATE_CARD) {
+            if (item != null && item.type == GhostexDrawerItem.Type.STATE_CARD) {
                 showRecoveryActions(item);
             }
         });
         sessionsList.setOnItemLongClickListener((parent, view, position, id) -> {
             GhostexDrawerItem item = sessionAdapter.getItem(position);
-            if (item != null && item.session != null) {
-                showSessionContextMenu(item.session, machineStore.getLastMachine());
-                return true;
-            } else if (item != null && item.type == GhostexDrawerItem.Type.STATE_CARD) {
+            if (item != null && item.type == GhostexDrawerItem.Type.STATE_CARD) {
                 showRecoveryActions(item);
                 return true;
             }
@@ -1377,7 +1380,7 @@ public final class GhostexAndroidController {
         */
         for (GhostexRemoteSession session : remoteSessions) {
             if (session.sessionId.equals(sessionId)) {
-                activity.getDrawer().closeDrawer(Gravity.LEFT);
+                activity.dismissGhostexDrawer();
                 attachRemoteSessionFromNotification(session);
                 return;
             }
@@ -1394,7 +1397,7 @@ public final class GhostexAndroidController {
         pendingNotificationSessionId = null;
         for (GhostexRemoteSession session : remoteSessions) {
             if (session.sessionId.equals(sessionId)) {
-                activity.getDrawer().closeDrawer(Gravity.LEFT);
+                activity.dismissGhostexDrawer();
                 attachRemoteSessionFromNotification(session);
                 return;
             }
@@ -1546,7 +1549,7 @@ public final class GhostexAndroidController {
             activity.getTermuxTerminalSessionClient().setCurrentSession(warmSession);
             applyAutoScrollSettingToCurrentTerminal();
             refreshZmxViewportOnceAfterSessionSwitch(warmSession, remoteSession, origin.reason("warm-session-reuse"), 1);
-            activity.getDrawer().closeDrawers();
+            activity.dismissGhostexDrawer();
             return;
         }
 
@@ -1594,7 +1597,7 @@ public final class GhostexAndroidController {
         activity.getTermuxTerminalSessionClient().setCurrentSession(terminalSession);
         applyAutoScrollSettingToCurrentTerminal();
         refreshZmxViewportOnceAfterSessionSwitch(terminalSession, remoteSession, origin.reason("new-ssh-attach"), 1);
-        activity.getDrawer().closeDrawers();
+        activity.dismissGhostexDrawer();
         setStatus("Attached to " + remoteSession.alias + " on " + machine.displayLabel() + ". Logs: " +
             GhostexFileLogger.shareableLogPath(activity));
     }
