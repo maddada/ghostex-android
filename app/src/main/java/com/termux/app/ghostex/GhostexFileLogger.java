@@ -15,6 +15,8 @@ import android.provider.MediaStore;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.termux.shared.logger.Logger;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
@@ -26,6 +28,8 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class GhostexFileLogger {
 
@@ -34,6 +38,12 @@ public final class GhostexFileLogger {
     private static final String LOG_FILE_PREFIX = "ghostex-android";
     private static final String PREVIOUS_LOG_FILE_NAME = "ghostex-android.previous.log";
     private static final Object LOCK = new Object();
+    private static final Pattern SENSITIVE_KEY_PATTERN = Pattern.compile(
+        "(?i)\\b(machine|target|command|commandLabel|name|sessionName|alias|title|path|file|url|host|username|user|zmx|stdout|stderr|output|token|cookie|secret|password|authorization)=");
+    private static final Pattern NEXT_KEY_PATTERN = Pattern.compile("\\s+[A-Za-z][A-Za-z0-9_-]*=");
+    private static final Pattern URL_PATTERN = Pattern.compile("(?i)\\bhttps?://\\S+");
+    private static final Pattern SSH_TARGET_PATTERN = Pattern.compile("\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9._:-]+\\b");
+    private static final Pattern PATH_PATTERN = Pattern.compile("(?i)(^|\\s)(/Users/\\S+|/home/\\S+|/var/\\S+|/tmp/\\S+|/storage/\\S+|/sdcard/\\S+|/data/user/\\S+|[A-Za-z]:\\\\\\S+)");
     private static boolean legacyLogsCleaned;
 
     private GhostexFileLogger() {}
@@ -63,6 +73,13 @@ public final class GhostexFileLogger {
     type looks textual. Treat every `ghostex-android*` row in the Ghostex
     Downloads folder as the same log family, keep one row, and append to that
     row so each log write cannot create another numbered file.
+
+    CDXC:AndroidLoggingPrivacy 2026-06-30-03:27:
+    The shareable Android SSH log is support-bundle data. Sanitize at the writer
+    boundary and only persist routine lifecycle diagnostics when app logging is
+    in debug/verbose mode; warnings, errors, and crashes still write by default
+    without exposing machine names, SSH targets, commands, paths, URLs, or
+    secret-like key/value payloads.
     */
     public static void log(@NonNull Context context,
                            @NonNull String area,
@@ -95,9 +112,11 @@ public final class GhostexFileLogger {
                            @Nullable String sessionTag,
                            @NonNull String message,
                            @Nullable Throwable throwable) {
+        if (!shouldWritePersistentLog(message, throwable)) return;
         String cleanSessionTag = sessionTag == null || sessionTag.trim().isEmpty() ? "zmx=none" : sessionTag.trim();
-        String line = timestamp() + " [" + area + "] [" + clean(cleanSessionTag) + "] " + clean(message);
-        if (throwable != null) line += "\n" + stackTrace(throwable);
+        String line = timestamp() + " [" + sanitizeForPersistentLog(area) + "] [" +
+            sanitizeForPersistentLog(cleanSessionTag) + "] " + sanitizeForPersistentLog(message);
+        if (throwable != null) line += "\n" + sanitizeForPersistentLog(stackTrace(throwable));
         synchronized (LOCK) {
             cleanupLegacyLogs(context.getApplicationContext());
             writeDownloadsLine(context.getApplicationContext(), line);
@@ -291,8 +310,56 @@ public final class GhostexFileLogger {
     }
 
     @NonNull
-    private static String clean(@NonNull String value) {
-        return value.replace('\n', ' ').replace('\r', ' ');
+    static String sanitizeForPersistentLog(@NonNull String value) {
+        String sanitized = redactSensitiveKeyValues(value.replace('\n', ' ').replace('\r', ' '));
+        sanitized = URL_PATTERN.matcher(sanitized).replaceAll("<url>");
+        sanitized = SSH_TARGET_PATTERN.matcher(sanitized).replaceAll("<ssh-target>");
+        sanitized = redactPaths(sanitized);
+        return sanitized;
+    }
+
+    private static boolean shouldWritePersistentLog(@NonNull String message,
+                                                    @Nullable Throwable throwable) {
+        if (throwable != null) return true;
+        if (Logger.getLogLevel() >= Logger.LOG_LEVEL_DEBUG) return true;
+        String lowerMessage = message.toLowerCase(Locale.ROOT);
+        return lowerMessage.contains("failed") ||
+            lowerMessage.contains("timed out") ||
+            lowerMessage.contains("missing password") ||
+            lowerMessage.contains("blocked") ||
+            lowerMessage.contains("could not");
+    }
+
+    @NonNull
+    private static String redactSensitiveKeyValues(@NonNull String value) {
+        Matcher matcher = SENSITIVE_KEY_PATTERN.matcher(value);
+        StringBuilder output = new StringBuilder();
+        int cursor = 0;
+        while (matcher.find(cursor)) {
+            int valueEnd = nextKeyStart(value, matcher.end());
+            output.append(value, cursor, matcher.end());
+            output.append("<redacted>");
+            cursor = valueEnd;
+        }
+        output.append(value.substring(cursor));
+        return output.toString();
+    }
+
+    private static int nextKeyStart(@NonNull String value, int fromIndex) {
+        Matcher nextKeyMatcher = NEXT_KEY_PATTERN.matcher(value);
+        if (nextKeyMatcher.find(fromIndex)) return nextKeyMatcher.start() + 1;
+        return value.length();
+    }
+
+    @NonNull
+    private static String redactPaths(@NonNull String value) {
+        Matcher matcher = PATH_PATTERN.matcher(value);
+        StringBuffer output = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(output, Matcher.quoteReplacement(matcher.group(1) + "<path>"));
+        }
+        matcher.appendTail(output);
+        return output.toString();
     }
 
     @NonNull

@@ -10,3 +10,10 @@
 -dontobfuscate
 #-renamesourcefileattribute SourceFile
 #-keepattributes SourceFile,LineNumberTable
+
+# CDXC:AndroidSshTransport 2026-06-30-03:27:
+# SSHJ resolves JCE algorithms through the BouncyCastle provider at runtime, and BouncyCastle registers algorithm implementations by provider metadata and string class names. Release shrinking must keep those provider classes so macOS Ed25519 host keys do not fall through to AndroidKeyStore and crash reconnect with KeyGenParameterSpec errors.
+-keep class org.bouncycastle.jce.provider.BouncyCastleProvider { *; }
+-keep class org.bouncycastle.jce.provider.BouncyCastleProvider$* { *; }
+-keep class org.bouncycastle.jce.provider.BouncyCastleProviderConfiguration { *; }
+-keep class org.bouncycastle.jcajce.provider.** { *; }

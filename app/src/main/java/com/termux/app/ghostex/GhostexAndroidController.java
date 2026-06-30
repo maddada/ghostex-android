@@ -1645,8 +1645,8 @@ public final class GhostexAndroidController {
         TerminalSession warmSession = warmSessions.get(warmKey);
         String sessionLogTag = zmxSessionLogTag(remoteSession);
         if (warmSession != null && warmSession.isRunning()) {
-            GhostexFileLogger.log(activity, "attach", sessionLogTag, "reusing warm session machine=" + machine.displayLabel() +
-                " sessionId=" + remoteSession.sessionId + " alias=" + remoteSession.alias);
+            GhostexFileLogger.log(activity, "attach", sessionLogTag,
+                "reusing warm session machineId=" + machine.id + " sessionId=" + remoteSession.sessionId);
             sessionAdapter.setActiveSession(machine, remoteSession);
             activity.getTermuxTerminalSessionClient().setCurrentSession(warmSession);
             applyAutoScrollSettingToCurrentTerminal();
@@ -1692,25 +1692,25 @@ public final class GhostexAndroidController {
         if (service == null) return;
         String sessionLogTag = zmxSessionLogTag(remoteSession);
         if (password == null || password.isEmpty()) {
-            GhostexFileLogger.log(activity, "attach", sessionLogTag, "blocked attach because password is missing machine=" +
-                machine.displayLabel() + " sessionId=" + remoteSession.sessionId);
+            GhostexFileLogger.log(activity, "attach", sessionLogTag,
+                "blocked attach because password is missing machineId=" + machine.id + " sessionId=" + remoteSession.sessionId);
             setStatus("Enter the SSH password for " + machine.displayLabel() + " before attaching.");
             showMachinePasswordManager(machine);
             return;
         }
         String remoteCommand = GhostexSshCommandBuilder.attachRemoteCommand(remoteSession);
         String sessionName = remoteSession.alias + " · " + (remoteSession.displayTitle.isEmpty() ? "Ghostex" : remoteSession.displayTitle);
-        GhostexFileLogger.log(activity, "attach", sessionLogTag, "creating remote terminal machine=" + machine.displayLabel() +
-            " sessionId=" + remoteSession.sessionId + " alias=" + remoteSession.alias +
-            " log=" + GhostexFileLogger.shareableLogPath(activity));
+        GhostexFileLogger.log(activity, "attach", sessionLogTag,
+            "creating remote terminal machineId=" + machine.id + " sessionId=" + remoteSession.sessionId +
+                " logPathAvailable=" + !GhostexFileLogger.shareableLogPath(activity).isEmpty());
         TermuxSession termuxSession = service.createExternalTerminalSession(
             new GhostexSshAttachProcess(activity, machine, password, remoteCommand, sessionLogTag),
             sessionName,
             GhostexWarmSessionMetadata.buildAttachCommandLabel(machine.id, remoteSession.sessionId),
             sessionLogTag);
         if (termuxSession == null) {
-            GhostexFileLogger.log(activity, "attach", sessionLogTag, "service could not create remote terminal machine=" +
-                machine.displayLabel() + " sessionId=" + remoteSession.sessionId);
+            GhostexFileLogger.log(activity, "attach", sessionLogTag,
+                "service could not create remote terminal machineId=" + machine.id + " sessionId=" + remoteSession.sessionId);
             setStatus("Could not open the remote session.");
             return;
         }

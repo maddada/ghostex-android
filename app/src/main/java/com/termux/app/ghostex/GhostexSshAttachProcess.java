@@ -92,11 +92,10 @@ public final class GhostexSshAttachProcess implements TerminalSession.ExternalTe
 
     @Override
     public void start(int columns, int rows, int cellWidthPixels, int cellHeightPixels) throws Exception {
-        GhostexFileLogger.log(context, "attach", sessionLogTag, "start machine=" + machine.displayLabel() +
-            " target=" + machine.connectionTarget() + " size=" + columns + "x" + rows +
-            " command=" + remoteCommand);
+        GhostexFileLogger.log(context, "attach", sessionLogTag, "start machineId=" + machine.id +
+            " size=" + columns + "x" + rows + " commandBytes=" + remoteCommand.length());
         SSHClient nextSsh = new GhostexSshTransport(context).openAuthenticatedClient(machine, password, sessionLogTag);
-        GhostexFileLogger.log(context, "attach", sessionLogTag, "authenticated machine=" + machine.displayLabel());
+        GhostexFileLogger.log(context, "attach", sessionLogTag, "authenticated machineId=" + machine.id);
         Session nextSession = nextSsh.startSession();
         try {
             nextSession.allocatePTY("xterm-256color", columns, rows, cellWidthPixels, cellHeightPixels,

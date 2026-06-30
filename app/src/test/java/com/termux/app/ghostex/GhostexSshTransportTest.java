@@ -2,12 +2,14 @@ package com.termux.app.ghostex;
 
 import net.schmizz.sshj.Config;
 import net.schmizz.sshj.common.Factory;
+import net.schmizz.sshj.common.SecurityUtils;
 import net.schmizz.sshj.transport.kex.KeyExchange;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.security.KeyFactory;
 import java.security.Security;
 import java.util.Locale;
 
@@ -23,6 +25,12 @@ public final class GhostexSshTransportTest {
     App-owned SSH must replace Android's platform `BC` provider with the
     bundled BouncyCastle provider before SSHJ negotiates ECDH, because the
     platform provider can reject `EC` even after Curve25519 is disabled.
+
+    CDXC:AndroidSshTransport 2026-06-30-03:27:
+    SSHJ must resolve Ed25519 and EC key factories through bundled BouncyCastle,
+    not Android Keystore. Release reconnect reads macOS `ssh-ed25519` host keys
+    before authentication, so provider drift causes machine setup and startup
+    reconnect to fail before the password path can recover.
     */
     @Test
     public void sshConfigExcludesCurve25519KeyExchangeFactories() {
@@ -40,6 +48,16 @@ public final class GhostexSshTransportTest {
         GhostexSshTransport.ensureBundledBouncyCastleProvider();
 
         Assert.assertTrue(Security.getProvider(BouncyCastleProvider.PROVIDER_NAME)
+            instanceof BouncyCastleProvider);
+    }
+
+    @Test
+    public void sshTransportForcesSshjKeyFactoriesToBundledBouncyCastle() throws Exception {
+        GhostexSshTransport.ensureBundledBouncyCastleProvider();
+
+        Assert.assertTrue(SecurityUtils.getKeyFactory("Ed25519").getProvider()
+            instanceof BouncyCastleProvider);
+        Assert.assertTrue(KeyFactory.getInstance("EC", BouncyCastleProvider.PROVIDER_NAME).getProvider()
             instanceof BouncyCastleProvider);
     }
 

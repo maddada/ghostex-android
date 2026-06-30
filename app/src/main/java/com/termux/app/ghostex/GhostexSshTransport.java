@@ -11,6 +11,7 @@ import net.schmizz.sshj.AndroidConfig;
 import net.schmizz.sshj.Config;
 import net.schmizz.sshj.SSHClient;
 import net.schmizz.sshj.common.Factory;
+import net.schmizz.sshj.common.SecurityUtils;
 import net.schmizz.sshj.connection.channel.direct.Session;
 import net.schmizz.sshj.sftp.SFTPClient;
 import net.schmizz.sshj.transport.kex.KeyExchange;
@@ -22,6 +23,7 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.InputStream;
+import java.security.KeyFactory;
 import java.security.MessageDigest;
 import java.security.Provider;
 import java.security.PublicKey;
@@ -38,6 +40,7 @@ public final class GhostexSshTransport {
     private static final int COMMAND_TIMEOUT_MS = 18_000;
     private static final int UPLOAD_TIMEOUT_MS = 60_000;
     private static final String HOST_KEY_PREFS = "ghostex_ssh_host_keys";
+    private static final String BOUNCY_CASTLE_PROVIDER = BouncyCastleProvider.PROVIDER_NAME;
 
     private final Context context;
 
@@ -88,7 +91,7 @@ public final class GhostexSshTransport {
         SSHClient ssh = null;
         try {
             GhostexFileLogger.log(context, "ssh", sessionLogTag,
-                "exec start machine=" + machine.displayLabel() + " command=" + safeCommandLabel(remoteCommand));
+                "exec start machineId=" + machine.id + " commandBytes=" + remoteCommand.length());
             ssh = openAuthenticatedClient(machine, password, sessionLogTag);
             try (Session session = ssh.startSession()) {
                 Session.Command command = session.exec(remoteCommand);
@@ -99,7 +102,7 @@ public final class GhostexSshTransport {
                     String output = readStream(command.getInputStream());
                     String error = readStream(command.getErrorStream());
                     GhostexFileLogger.log(context, "ssh", sessionLogTag,
-                        "exec timed out machine=" + machine.displayLabel() + " outputBytes=" +
+                        "exec timed out machineId=" + machine.id + " outputBytes=" +
                             combineOutput(output, error).length());
                     return CommandResult.timeout(combineOutput(output, error));
                 }
@@ -107,13 +110,14 @@ public final class GhostexSshTransport {
                 String error = readStream(command.getErrorStream());
                 String combined = combineOutput(output, error);
                 GhostexFileLogger.log(context, "ssh", sessionLogTag,
-                    "exec finished machine=" + machine.displayLabel() + " exit=" + exitStatus +
+                    (exitStatus == 0 ? "exec finished" : "exec failed") +
+                        " machineId=" + machine.id + " exit=" + exitStatus +
                         " outputBytes=" + combined.length());
                 return new CommandResult(exitStatus, combined, false);
             }
         } catch (Exception error) {
             GhostexFileLogger.log(context, "ssh", sessionLogTag,
-                "exec failed machine=" + machine.displayLabel(), error);
+                "exec failed machineId=" + machine.id, error);
             return CommandResult.failure(error.getMessage() == null ? "SSH command failed." : error.getMessage());
         } finally {
             if (ssh != null) {
@@ -124,12 +128,6 @@ public final class GhostexSshTransport {
                 }
             }
         }
-    }
-
-    @NonNull
-    private static String safeCommandLabel(@NonNull String remoteCommand) {
-        String compact = remoteCommand.replace('\n', ' ').replace('\r', ' ');
-        return compact.length() <= 180 ? compact : compact.substring(0, 180) + "...";
     }
 
     @NonNull
@@ -189,23 +187,23 @@ public final class GhostexSshTransport {
                                       @Nullable String password,
                                       @Nullable String sessionLogTag) throws Exception {
         if (password == null || password.isEmpty()) {
-            GhostexFileLogger.log(context, "ssh", sessionLogTag, "missing password machine=" + machine.displayLabel() +
-                " target=" + machine.connectionTarget());
+            GhostexFileLogger.log(context, "ssh", sessionLogTag,
+                "missing password machineId=" + machine.id + " customPort=" + (machine.port != 22));
             throw new IllegalArgumentException("SSH needs a saved password until app-owned key auth is added.");
         }
         SSHClient ssh = newSshClient(machine);
         boolean connected = false;
         try {
-            GhostexFileLogger.log(context, "ssh", sessionLogTag, "connecting machine=" + machine.displayLabel() +
-                " target=" + machine.connectionTarget());
+            GhostexFileLogger.log(context, "ssh", sessionLogTag,
+                "connecting machineId=" + machine.id + " customPort=" + (machine.port != 22));
             ssh.connect(machine.host, machine.port);
             connected = true;
-            GhostexFileLogger.log(context, "ssh", sessionLogTag, "connected machine=" + machine.displayLabel());
+            GhostexFileLogger.log(context, "ssh", sessionLogTag, "connected machineId=" + machine.id);
             ssh.authPassword(machine.username, password);
-            GhostexFileLogger.log(context, "ssh", sessionLogTag, "authenticated machine=" + machine.displayLabel());
+            GhostexFileLogger.log(context, "ssh", sessionLogTag, "authenticated machineId=" + machine.id);
             return ssh;
         } catch (Exception error) {
-            GhostexFileLogger.log(context, "ssh", sessionLogTag, "connect/auth failed machine=" + machine.displayLabel() +
+            GhostexFileLogger.log(context, "ssh", sessionLogTag, "connect/auth failed machineId=" + machine.id +
                 " connected=" + connected, error);
             try {
                 if (connected) ssh.disconnect();
@@ -226,11 +224,35 @@ public final class GhostexSshTransport {
         return ssh;
     }
 
-    static void ensureBundledBouncyCastleProvider() {
-        Provider provider = Security.getProvider(BouncyCastleProvider.PROVIDER_NAME);
-        if (provider instanceof BouncyCastleProvider) return;
-        if (provider != null) Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME);
-        Security.insertProviderAt(new BouncyCastleProvider(), 1);
+    static synchronized void ensureBundledBouncyCastleProvider() {
+        /*
+        CDXC:AndroidSshTransport 2026-06-30-03:27:
+        Release builds must force SSHJ's JCE lookups onto the bundled BouncyCastle provider before reading macOS `ssh-ed25519` host keys. Android Keystore also advertises Ed25519 on some devices but rejects raw SSH public-key specs with KeyGenParameterSpec errors, so provider insertion alone is not enough.
+        */
+        Provider provider = Security.getProvider(BOUNCY_CASTLE_PROVIDER);
+        if (!(provider instanceof BouncyCastleProvider)) {
+            if (provider != null) Security.removeProvider(BOUNCY_CASTLE_PROVIDER);
+            Security.insertProviderAt(new BouncyCastleProvider(), 1);
+        }
+        SecurityUtils.setSecurityProvider(BOUNCY_CASTLE_PROVIDER);
+        validateBundledBouncyCastleProvider();
+    }
+
+    private static void validateBundledBouncyCastleProvider() {
+        try {
+            Provider provider = Security.getProvider(BOUNCY_CASTLE_PROVIDER);
+            if (!(provider instanceof BouncyCastleProvider)) {
+                throw new IllegalStateException("Bundled BouncyCastle provider is not installed.");
+            }
+            if (!(SecurityUtils.getKeyFactory("Ed25519").getProvider() instanceof BouncyCastleProvider)) {
+                throw new IllegalStateException("SSHJ Ed25519 KeyFactory did not resolve to bundled BouncyCastle.");
+            }
+            if (!(KeyFactory.getInstance("EC", BOUNCY_CASTLE_PROVIDER).getProvider() instanceof BouncyCastleProvider)) {
+                throw new IllegalStateException("SSHJ EC KeyFactory did not resolve to bundled BouncyCastle.");
+            }
+        } catch (Exception error) {
+            throw new IllegalStateException("Ghostex Android SSH crypto provider is unavailable.", error);
+        }
     }
 
     static Config createSshConfig() {

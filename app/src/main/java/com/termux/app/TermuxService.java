@@ -694,8 +694,8 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         TermuxSession newTermuxSession = TermuxSession.wrapTerminalSession(terminalSession, executionCommand,
             this, executionCommand.isPluginExecutionCommand);
         mShellManager.mTermuxSessions.add(newTermuxSession);
-        GhostexFileLogger.log(this, "service", sessionLogTag, "registered external terminal session name=" + sessionName +
-            " commandLabel=" + commandLabel + " handle=" + terminalSession.mHandle);
+        GhostexFileLogger.log(this, "service", sessionLogTag, "registered external terminal session handle=" +
+            terminalSession.mHandle + " commandLabelBytes=" + commandLabel.length());
 
         if (mTermuxTerminalSessionActivityClient != null)
             mTermuxTerminalSessionActivityClient.termuxSessionListNotifyUpdated();
