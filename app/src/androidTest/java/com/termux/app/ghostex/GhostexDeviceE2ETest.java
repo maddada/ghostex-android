@@ -83,7 +83,7 @@ public final class GhostexDeviceE2ETest {
     }
 
     @Test
-    public void remoteAttachCommandUsesStableSessionId() {
+    public void remoteAttachCommandUsesFastProviderPathWhenAvailable() {
         E2EConfig config = E2EConfig.fromInstrumentationArguments();
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         GhostexSessionInventoryClient.Result result = new GhostexSessionInventoryClient(context)
@@ -98,9 +98,22 @@ public final class GhostexDeviceE2ETest {
             session);
 
         String command = GhostexSshCommandBuilder.buildCopyableAttachCommand(config.machine, session);
-        Assert.assertTrue(command, command.contains("ghostex attach"));
-        Assert.assertTrue(command, command.contains("--session-id"));
-        Assert.assertTrue(command, command.contains(session.sessionId));
+        /*
+        CDXC:AndroidRemoteAttachLatency 2026-06-30-19:16:
+        Device E2E should accept the fast direct zmx attach command for live
+        provider rows and only require the stable Ghostex CLI selector for rows
+        that do not expose live provider identity.
+        */
+        if (session.isZmxBacked() && !session.providerSessionName.isEmpty() &&
+            ("exists".equals(session.providerSessionState) || session.isLive)) {
+            Assert.assertTrue(command, command.contains("zmx attach"));
+            Assert.assertTrue(command, command.contains(session.providerSessionName));
+            Assert.assertFalse(command, command.contains("ghostex attach"));
+        } else {
+            Assert.assertTrue(command, command.contains("ghostex attach"));
+            Assert.assertTrue(command, command.contains("--session-id"));
+            Assert.assertTrue(command, command.contains(session.sessionId));
+        }
     }
 
     private static GhostexRemoteSession selectSession(List<GhostexRemoteSession> sessions,

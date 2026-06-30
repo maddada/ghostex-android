@@ -37,8 +37,8 @@ public final class GhostexZmxViewportRefreshTest {
     @Test
     public void delayedAttachRefreshRequiresVisibleRenderedTerminal() {
         /*
-        CDXC:AndroidRemoteAttach 2026-06-22-05:24:
-        A remote ZMX attach can spend several seconds opening SSH and starting `ghostex attach`.
+        CDXC:AndroidRemoteAttachLatency 2026-06-30-19:16:
+        A remote ZMX attach can spend time opening SSH and starting either direct `zmx attach` or fallback `ghostex attach`.
         The automatic refresh should not start its final two-second delay until the selected Android terminal is measured, visible, backed by an emulator, and has rendered remote output.
         */
         Assert.assertFalse(GhostexZmxViewportRefresh.isAttachVisibleForDelayedRefresh(

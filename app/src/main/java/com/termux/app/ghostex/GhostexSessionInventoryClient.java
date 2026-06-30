@@ -14,6 +14,8 @@ import java.util.Locale;
 
 public final class GhostexSessionInventoryClient {
 
+    static final String SESSIONS_COMMAND = "ghostex sessions --json --mobile-summary";
+
     private final GhostexSshTransport sshTransport;
 
     /*
@@ -43,6 +45,11 @@ public final class GhostexSessionInventoryClient {
 	    Ghostex CLI. `ghostex sessions --json` owns the list/status contract through
 	    gxserver list and presentation snapshot APIs, so the macOS app does not need
 	    to be running for agent session states to appear.
+
+        CDXC:AndroidRemoteSessionsPerformance 2026-06-30-19:16:
+        Large Mac inventories should use the CLI mobile summary contract over
+        SSH, matching iOS, so Android receives only the sidebar row fields it
+        renders and avoids parsing desktop-only presentation payloads.
 
     CDXC:AndroidConnectionRecovery 2026-05-17-12:32:
     SSHJ and the remote Ghostex CLI usually report actionable failures. Merge
@@ -140,7 +147,7 @@ public final class GhostexSessionInventoryClient {
     public Result fetchSessions(@NonNull GhostexMachine machine, @Nullable String password) {
         try {
             GhostexSshTransport.CommandResult commandResult = runRemoteGhostexCommand(machine, password,
-                "ghostex sessions --json", "zmx=none op=fetchSessions");
+                SESSIONS_COMMAND, "zmx=none op=fetchSessions");
             if (commandResult.timedOut) {
                 return Result.failure(GhostexRemoteTimeoutCopy.connecting(machine));
             }

@@ -33,9 +33,11 @@ public final class GhostexSshCommandBuilderTest {
     Android context-menu lifecycle and focus commands use `--session-id` flag
     forms so every remote action has the same stable selector shape as rename.
 
-    CDXC:AndroidRemoteSessions 2026-05-17-13:59:
-    Attach uses the same `--session-id` flag form so the primary terminal-open
-    path is documented and stable-id based too.
+    CDXC:AndroidRemoteAttachLatency 2026-06-30-19:16:
+    Live zmx rows should attach directly by provider session name so opening a
+    terminal does not pay the Mac-side Ghostex CLI selector/list cost. Rows
+    without live provider identity still fall back to the documented
+    `ghostex attach --session-id` command.
 
     CDXC:AndroidConnectionManagement 2026-05-17-14:07:
     Check connection should explicitly verify both `ghostex` and `zmx` on the
@@ -93,15 +95,31 @@ public final class GhostexSshCommandBuilderTest {
         Assert.assertTrue(command.contains("'madda@mac.tailnet.ts.net'"));
         String quotedRemoteCommand = GhostexSshCommandBuilder.shellQuote(
             GhostexSshCommandBuilder.loginShellCommand(
-                "ghostex attach --session-id " + GhostexSshCommandBuilder.shellQuote(session.sessionId) +
-                    " --project-id " + GhostexSshCommandBuilder.shellQuote(session.projectId)));
+                "exec zmx attach " + GhostexSshCommandBuilder.shellQuote(session.providerSessionName)));
         Assert.assertTrue(command.contains(quotedRemoteCommand));
         Assert.assertFalse(command.contains("ghostex attach " + GhostexSshCommandBuilder.shellQuote(session.alias)));
     }
 
     @Test
-    public void attachCommandIncludesProjectIdWhenAvailable() {
+    public void liveZmxAttachCommandUsesProviderSessionDirectly() {
+        /*
+        CDXC:AndroidRemoteAttachLatency 2026-06-30-19:16:
+        Android inventory rows already carry the live zmx provider session name,
+        so the terminal-open command should bypass `ghostex attach --session-id`
+        and avoid a full remote inventory lookup.
+        */
         GhostexRemoteSession session = session();
+
+        String command = GhostexSshCommandBuilder.attachRemoteCommand(session);
+
+        Assert.assertEquals("exec zmx attach " +
+            GhostexSshCommandBuilder.shellQuote(session.providerSessionName), command);
+        Assert.assertFalse(command.contains("ghostex attach --session-id"));
+    }
+
+    @Test
+    public void attachCommandFallsBackToGhostexCliWithoutProviderSessionName() {
+        GhostexRemoteSession session = sessionWithoutProviderSessionName();
 
         String command = GhostexSshCommandBuilder.attachRemoteCommand(session);
 
@@ -255,6 +273,25 @@ public final class GhostexSshCommandBuilderTest {
             "running",
             "zmx",
             "zmx-work",
+            "codex",
+            "2026-05-17T10:00:00Z",
+            false,
+            false
+        );
+    }
+
+    private GhostexRemoteSession sessionWithoutProviderSessionName() {
+        return new GhostexRemoteSession(
+            "work's-main",
+            "session-1",
+            "project-1",
+            "Work",
+            "Ghostex",
+            "/Users/madda/dev/ghostex",
+            "idle",
+            "running",
+            "zmx",
+            "",
             "codex",
             "2026-05-17T10:00:00Z",
             false,

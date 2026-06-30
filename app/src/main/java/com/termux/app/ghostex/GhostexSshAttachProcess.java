@@ -58,12 +58,12 @@ public final class GhostexSshAttachProcess implements TerminalSession.ExternalTe
     This preserves Play-compliant target SDK behavior while keeping
     the terminal UI, warm-session cache, and PTY interaction model intact.
 
-    CDXC:AndroidRemoteAttach 2026-05-18-05:41:
-    Mac-side `ghostex attach` ultimately execs the provider attach command and
-    needs to behave like a real interactive SSH terminal. Start an SSH shell
+    CDXC:AndroidRemoteAttachLatency 2026-06-30-19:16:
+    Android attach startup may be direct `zmx attach` for live provider rows or
+    fallback `ghostex attach` for rows that need CLI resolution. Both paths need
+    to behave like a real interactive SSH terminal, so start an SSH shell
     channel after PTY allocation and `exec` the login-shell command inside it
-    instead of using SSH exec directly, so ZMX sees the same terminal lifecycle
-    as a user running `ssh -tt`.
+    instead of using SSH exec directly.
 
     CDXC:AndroidRemoteAttach 2026-05-18-06:25:
     The direct PTY geometry and SSHJ auto-expand experiment did not change the

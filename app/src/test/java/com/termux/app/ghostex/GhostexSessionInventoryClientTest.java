@@ -45,6 +45,18 @@ public final class GhostexSessionInventoryClientTest {
     */
 
     @Test
+    public void sessionsCommandRequestsMobileSummary() {
+        /*
+        CDXC:AndroidRemoteSessionsPerformance 2026-06-30-19:16:
+        Android fetches large Mac session lists over SSH and should request the
+        compact mobile summary payload instead of the full desktop diagnostic
+        JSON contract.
+        */
+        Assert.assertEquals("ghostex sessions --json --mobile-summary",
+            GhostexSessionInventoryClient.SESSIONS_COMMAND);
+    }
+
+    @Test
     public void parseSessionsExtractsJsonFromSshFramingAndFiltersToZmx() throws Exception {
         String output = "Last login: Sun May 17\n" +
             "{\n" +

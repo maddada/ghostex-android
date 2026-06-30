@@ -34,10 +34,12 @@ public final class GhostexSshCommandBuilder {
     instead of positional selector text. This keeps Android wake, sleep, kill,
     focus, and rename on one stable-id CLI contract.
 
-    CDXC:AndroidRemoteSessions 2026-05-17-13:59:
-    Attach is also an Android remote-session action. Use `ghostex attach
-    --session-id <id>` so opening a terminal and long-press actions share the
-    same documented stable-id selector contract.
+    CDXC:AndroidRemoteAttachLatency 2026-06-30-19:16:
+    Android attach taps should avoid the Mac-side `ghostex attach --session-id`
+    selector lookup when the row already includes a live zmx provider session
+    name. Keep stable session id validation for every attach row, but use the
+    direct zmx provider attach path for live rows so opening a terminal does not
+    wait for a full remote inventory.
 
     CDXC:AndroidConnectionManagement 2026-05-17-14:07:
     Check connection should prove the first-release ZMX dependency, not only SSH
@@ -163,10 +165,22 @@ public final class GhostexSshCommandBuilder {
         attach, matching lifecycle and rename actions, so the Mac-side CLI
         resolves the exact full server/project/session zmx route instead of a
         bare session id that can collide across projects.
+
+        CDXC:AndroidRemoteAttachLatency 2026-06-30-19:16:
+        The stable-id Ghostex CLI attach command performs a session-list
+        resolution before launching the provider. Live zmx rows already carry
+        the provider session name, so Android should attach directly to zmx and
+        reserve the CLI selector path for rows without live provider identity.
         */
+        String sessionId = requireSessionId(session);
+        String providerSessionName = session.providerSessionName == null ? "" : session.providerSessionName.trim();
+        if (session.isZmxBacked() && !providerSessionName.isEmpty() &&
+            ("exists".equals(session.providerSessionState) || session.isLive)) {
+            return "exec zmx attach " + shellQuote(providerSessionName);
+        }
         String projectId = session.projectId == null ? "" : session.projectId.trim();
         String projectFlag = projectId.isEmpty() ? "" : " --project-id " + shellQuote(projectId);
-        return "ghostex attach --session-id " + shellQuote(requireSessionId(session)) + projectFlag;
+        return "ghostex attach --session-id " + shellQuote(sessionId) + projectFlag;
     }
 
     public static String renameSessionRemoteCommand(@NonNull GhostexRemoteSession session,
