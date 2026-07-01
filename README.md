@@ -117,7 +117,7 @@ GHOSTEX_ANDROID_CONFIRM_CLEAR_DATA=1 \
 tools/ghostex-android-device-e2e.sh
 ```
 
-The E2E harness uninstalls any existing `io.ghostex`/`io.ghostex.test` packages, installs the debug app/test APKs on a disposable connected Android device or emulator, starts Ghostex Android, and verifies Tailscale SSHJ reachability, remote `ghostex` and `zmx`, ZMX inventory parsing, stable-id attach command construction, and a stable-session-id remote action.
+The E2E harness uninstalls any existing `io.ghostex`/`io.ghostex.test` packages, installs the debug app/test APKs on a disposable connected Android device or emulator, starts Ghostex Android, and verifies Tailscale SSHJ reachability, remote `ghostex` and `zmx`, ZMX inventory parsing, direct zmx attach for live provider rows, stable-id attach fallback, and a stable-session-id remote action.
 
 If `GHOSTEX_ANDROID_PASSWORD` is set, the harness streams it into the debug app's private E2E storage and removes the staged files after the run; it is not forwarded as a Gradle instrumentation argument, written through host temp files, or written through shared Android temp storage. The instrumentation test deletes the private password file after the first read attempt, including failed reads, and keeps the value only in the test process for the remaining E2E methods.
 

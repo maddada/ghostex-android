@@ -1910,6 +1910,12 @@ task verifyGhostexReleaseE2EHarness() {
         not the removed phone-side OpenSSH/sshpass package flow. Gate the script
         for direct instrumentation after launch and for explicit copy stating
         that no phone-side OpenSSH dependency remains.
+
+        CDXC:AndroidReleaseE2E 2026-07-01-04:28:
+        Android attach proof now accepts the direct zmx provider path for live
+        rows, but still requires the stable Ghostex session-id fallback when
+        provider identity is missing. Gate the E2E source for both branches so
+        release readiness matches the current lower-latency attach contract.
         */
         def violations = []
         def runner = new File(rootDir, "tools/ghostex-android-device-e2e.sh")
@@ -1953,21 +1959,26 @@ task verifyGhostexReleaseE2EHarness() {
                 if (!helperText.contains(required)) violations.add("ghostex-android-adb.sh missing " + required)
             }
         }
+        def testText = testFile.isFile() ? testFile.getText("UTF-8") : ""
         if (!testFile.isFile() ||
-            !testFile.getText("UTF-8").contains("remoteMachinePassesGhostexZmxReadinessCheck") ||
-            !testFile.getText("UTF-8").contains("remoteInventoryReturnsZmxSessionsAndStableActionsWork") ||
-            !testFile.getText("UTF-8").contains("remoteAttachCommandUsesStableSessionId") ||
-            !testFile.getText("UTF-8").contains("readPasswordFile") ||
-            !testFile.getText("UTF-8").contains("ghostex-e2e") ||
-            !testFile.getText("UTF-8").contains("cachedPassword") ||
-            !testFile.getText("UTF-8").contains("ByteArrayOutputStream") ||
-            !testFile.getText("UTF-8").contains("while ((read = input.read(buffer)) != -1)") ||
-            !testFile.getText("UTF-8").contains("file.delete()") ||
-            !testFile.getText("UTF-8").contains("finally") ||
-            !testFile.getText("UTF-8").contains("addSuppressed")) {
+            !testText.contains("remoteMachinePassesGhostexZmxReadinessCheck") ||
+            !testText.contains("remoteInventoryReturnsZmxSessionsAndStableActionsWork") ||
+            !testText.contains("remoteAttachCommandUsesFastProviderPathWhenAvailable") ||
+            !testText.contains("zmx attach") ||
+            !testText.contains("ghostex attach") ||
+            !testText.contains("--session-id") ||
+            !testText.contains("providerSessionName") ||
+            !testText.contains("readPasswordFile") ||
+            !testText.contains("ghostex-e2e") ||
+            !testText.contains("cachedPassword") ||
+            !testText.contains("ByteArrayOutputStream") ||
+            !testText.contains("while ((read = input.read(buffer)) != -1)") ||
+            !testText.contains("file.delete()") ||
+            !testText.contains("finally") ||
+            !testText.contains("addSuppressed")) {
             violations.add("missing GhostexDeviceE2ETest readiness and live inventory/action checks")
         }
-        if (testFile.isFile() && testFile.getText("UTF-8").contains("value(args, \"ghostexPassword\")")) {
+        if (testText.contains("value(args, \"ghostexPassword\")")) {
             violations.add("GhostexDeviceE2ETest must read optional SSH passwords from private E2E storage, not instrumentation arguments")
         }
         if (!violations.isEmpty()) {
