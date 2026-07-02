@@ -27,6 +27,7 @@ final class GhostexSessionAgentIcon {
         register("factory-droid", R.drawable.ic_ghostex_agent_factory_droid, 0xFFFF7A1A);
         register("gemini", R.drawable.ic_ghostex_agent_gemini, 0xFF8B9AFF);
         register("grok-build", R.drawable.ic_ghostex_agent_grok_build, 0xFFFFFFFF);
+        register("hermes-agent", R.drawable.ic_ghostex_agent_hermes_agent, 0xFFF3C46B);
         register("opencode", R.drawable.ic_ghostex_agent_opencode, 0xFF6D96C0);
         register("pi", R.drawable.ic_ghostex_agent_pi, 0xFFC8FF62);
         register("t3", R.drawable.ic_ghostex_agent_t3, 0xFFFF6AF3);
@@ -122,6 +123,10 @@ final class GhostexSessionAgentIcon {
             case "amp":
             case "amp cli":
                 return "amp-cli";
+            case "hermes":
+            case "hermes agent":
+            case "hermes-agent":
+                return "hermes-agent";
             case "browser":
                 return "browser";
             default:
