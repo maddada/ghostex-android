@@ -5,6 +5,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ContentResolver;
 import android.content.Context;
+import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -26,6 +27,7 @@ import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -87,6 +89,7 @@ public final class GhostexAndroidController {
     private final ArrayList<GhostexDrawerItem> drawerItems = new ArrayList<>();
     private final HashSet<String> collapsedProjectKeys = new HashSet<>();
     private final HashSet<String> collapsedProjectSessionListKeys = new HashSet<>();
+    private final HashSet<String> collapsedGroupKeys = new HashSet<>();
     private final HashSet<String> submittedFirstPromptTitleCommandEnterKeys = new HashSet<>();
     private final LinkedHashMap<String, TerminalSession> warmSessions =
         new LinkedHashMap<>(WARM_SESSION_LIMIT + 1, 0.75f, true);
@@ -117,6 +120,8 @@ public final class GhostexAndroidController {
     private int imagePasteCount;
     private int filePasteCount;
     private String pendingNotificationSessionId;
+    @Nullable private GhostexWorkspaceInventory workspaceInventory;
+    private AlertDialog remoteSessionCreatingDialog;
     private SoundPool doneNotificationSoundPool;
     private int doneNotificationSoundId;
     private boolean doneNotificationSoundLoaded;
@@ -459,6 +464,7 @@ public final class GhostexAndroidController {
             drawerSessionPollListener = null;
         }
         mainHandler.removeCallbacksAndMessages(null);
+        dismissRemoteSessionCreatingIndicator();
         executor.shutdownNow();
     }
 
@@ -602,6 +608,11 @@ public final class GhostexAndroidController {
             showProjectContextMenu(item, machineStore.getLastMachine()));
         sessionAdapter.setOnProjectToggleListener(this::toggleProjectCollapsed);
         sessionAdapter.setOnProjectSessionListToggleListener(this::toggleProjectSessionListCollapsed);
+        sessionAdapter.setOnGroupToggleListener(this::toggleGroupCollapsed);
+        sessionAdapter.setOnAgentLaunchListener((item, agent) ->
+            createRemoteAgentSessionForProject(item, agent, machineStore.getLastMachine()));
+        sessionAdapter.setOnQuickActionListener((item, action) ->
+            runProjectQuickAction(item, action, machineStore.getLastMachine()));
         sessionsList.setAdapter(sessionAdapter);
         sessionsList.setOnScrollListener(new AbsListView.OnScrollListener() {
             @Override
@@ -1188,6 +1199,8 @@ public final class GhostexAndroidController {
             stopSessionStatusPolling();
             collapsedProjectKeys.clear();
             collapsedProjectSessionListKeys.clear();
+            collapsedGroupKeys.clear();
+            workspaceInventory = null;
             sessionAdapter.setCurrentMachineId(null);
             if (!fromStartup) showMachineEditor(null);
             setStatus("Add your Mac or remote workstation to start.");
@@ -1319,6 +1332,7 @@ public final class GhostexAndroidController {
                 return;
             }
             remoteSessions.clear();
+            workspaceInventory = null;
             publishNotificationSessions();
             setDrawerState("Connection needs attention",
                 result.errorMessage == null ? "Could not connect to the selected machine." : result.errorMessage,
@@ -1329,7 +1343,8 @@ public final class GhostexAndroidController {
             maybePromptForPasswordAfterFailure(machine, result.errorMessage);
             return;
         }
-        applyInventorySessions(machine, result.sessions, successStatusOverride, preserveDrawerList);
+        applyInventorySessions(machine, result.sessions, result.workspace, successStatusOverride,
+            preserveDrawerList);
         activity.getDrawer().openDrawer(Gravity.LEFT);
     }
 
@@ -1340,17 +1355,13 @@ public final class GhostexAndroidController {
             if (isSessionDrawerVisible()) setStatus("Session refresh failed: " + message);
             return;
         }
-        applyInventorySessions(machine, result.sessions, null, isSessionDrawerVisible() && hasVisibleSessionList());
+        applyInventorySessions(machine, result.sessions, result.workspace, null,
+            isSessionDrawerVisible() && hasVisibleSessionList());
     }
 
     private void applyInventorySessions(@NonNull GhostexMachine machine,
                                         @NonNull List<GhostexRemoteSession> sessions,
-                                        @Nullable String successStatusOverride) {
-        applyInventorySessions(machine, sessions, successStatusOverride, false);
-    }
-
-    private void applyInventorySessions(@NonNull GhostexMachine machine,
-                                        @NonNull List<GhostexRemoteSession> sessions,
+                                        @Nullable GhostexWorkspaceInventory workspace,
                                         @Nullable String successStatusOverride,
                                         boolean preserveDrawerList) {
         GhostexDrawerScrollAnchor scrollAnchor = preserveDrawerList ? captureDrawerScrollAnchor() : null;
@@ -1365,11 +1376,20 @@ public final class GhostexAndroidController {
         boolean shouldPlayStatusSound = hasNewStatusSoundTransition(previousSoundStateBySessionId, sessions);
         remoteSessions.clear();
         remoteSessions.addAll(sessions);
+        workspaceInventory = workspace;
         publishNotificationSessions();
         if (shouldPlayStatusSound) playDoneNotificationSound();
         consumePendingNotificationSession();
         sessionAdapter.setCurrentMachineId(machine.id);
-        if (sessions.isEmpty()) {
+        /*
+        CDXC:AndroidSidebar 2026-07-12-10:05:
+        The mobile summary now lists every active project even when it has no
+        sessions, so a session-less inventory with projects should render the
+        project headers (with create/agent affordances) instead of the legacy
+        no-sessions recovery card.
+        */
+        boolean hasActiveProjects = workspace != null && !workspace.projects.isEmpty();
+        if (sessions.isEmpty() && !hasActiveProjects) {
             setDrawerState("No ZMX sessions yet",
                 "The machine is reachable, but the Ghostex CLI did not return any ZMX-backed sessions.",
                 "Start or resume sessions in Ghostex on the Mac, then tap Retry.");
@@ -1942,9 +1962,28 @@ public final class GhostexAndroidController {
 
     private void rebuildDrawerItems() {
         drawerItems.clear();
-        drawerItems.addAll(GhostexDrawerItem.buildItems(remoteSessions, collapsedProjectKeys,
-            collapsedProjectSessionListKeys));
+        drawerItems.addAll(GhostexDrawerItem.buildItems(remoteSessions, workspaceInventory,
+            collapsedProjectKeys, collapsedProjectSessionListKeys, collapsedGroupKeys));
         pruneCollapsedProjectKeys();
+    }
+
+    private void toggleGroupCollapsed(@NonNull GhostexDrawerItem groupItem) {
+        /*
+        CDXC:AndroidSidebar 2026-07-12-10:05:
+        Named-group disclosure mirrors the project-collapse pattern but stays
+        in-memory for the app session: group membership lives on the Mac and
+        can change shape between connects, so Android does not persist these
+        keys per machine yet.
+        */
+        if (groupItem.type != GhostexDrawerItem.Type.GROUP_HEADER) return;
+        if (collapsedGroupKeys.contains(groupItem.groupCollapseKey)) {
+            collapsedGroupKeys.remove(groupItem.groupCollapseKey);
+        } else {
+            collapsedGroupKeys.add(groupItem.groupCollapseKey);
+        }
+        GhostexDrawerScrollAnchor scrollAnchor = captureDrawerScrollAnchor();
+        rebuildDrawerItems();
+        notifyDrawerAdapterPreservingScroll(scrollAnchor);
     }
 
     private void toggleProjectCollapsed(@NonNull GhostexDrawerItem projectItem) {
@@ -2274,51 +2313,194 @@ public final class GhostexAndroidController {
                                                @Nullable GhostexMachine machine) {
         if (machine == null) return;
         if (!canRunRemoteSidebarAction(machine, "creating a session")) return;
+        launchRemoteProjectSession(machine, projectItem,
+            "Creating a terminal in " + projectItem.projectTitle + "…",
+            password -> inventoryClient.createSession(machine, password, projectItem),
+            () -> createRemoteSessionForProject(projectItem, machine));
+    }
+
+    private void createRemoteAgentSessionForProject(@NonNull GhostexDrawerItem projectItem,
+                                                    @NonNull GhostexWorkspaceInventory.AgentLauncher agent,
+                                                    @Nullable GhostexMachine machine) {
+        /*
+        CDXC:AndroidSidebar 2026-07-12-10:05:
+        Agents isle taps create-and-start a Mac-side agent session with
+        `ghostex create-agent`, then attach through the same instant-feedback
+        launch pipeline as the project plus button.
+        */
+        if (machine == null) return;
+        if (!canRunRemoteSidebarAction(machine, "starting an agent session")) return;
+        if (projectItem.projectId == null || projectItem.projectId.trim().isEmpty()) {
+            setStatus("This project has no stable project id, so agent sessions cannot be started here.");
+            return;
+        }
+        launchRemoteProjectSession(machine, projectItem,
+            "Starting " + agent.displayName() + " in " + projectItem.projectTitle + "…",
+            password -> inventoryClient.createAgentSession(machine, password,
+                projectItem.projectId, agent.agentId),
+            () -> createRemoteAgentSessionForProject(projectItem, agent, machine));
+    }
+
+    private void runProjectQuickAction(@NonNull GhostexDrawerItem projectItem,
+                                       @NonNull GhostexWorkspaceInventory.QuickAction action,
+                                       @Nullable GhostexMachine machine) {
+        /*
+        CDXC:AndroidSidebar 2026-07-12-10:05:
+        Browser quick actions carry their URL in the summary payload, so open
+        them on-device with ACTION_VIEW instead of a Mac round trip. Terminal
+        quick actions run `ghostex run-action`, which starts a terminal session
+        Android then attaches to, matching the instant-create UX.
+        */
+        if (action.isBrowser()) {
+            openBrowserQuickAction(action);
+            return;
+        }
+        if (machine == null) return;
+        if (!canRunRemoteSidebarAction(machine, "running this quick action")) return;
+        if (projectItem.projectId == null || projectItem.projectId.trim().isEmpty()) {
+            setStatus("This project has no stable project id, so quick actions cannot run here.");
+            return;
+        }
+        launchRemoteProjectSession(machine, projectItem,
+            "Running " + action.displayName() + " in " + projectItem.projectTitle + "…",
+            password -> inventoryClient.runProjectAction(machine, password,
+                projectItem.projectId, action.commandId),
+            () -> runProjectQuickAction(projectItem, action, machine));
+    }
+
+    private void openBrowserQuickAction(@NonNull GhostexWorkspaceInventory.QuickAction action) {
+        String url = action.url == null ? "" : action.url.trim();
+        if (url.isEmpty()) {
+            setStatus("This browser action has no URL configured.");
+            return;
+        }
+        try {
+            activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+            activity.getDrawer().closeDrawers();
+            setStatus("Opened " + action.displayName() + " in the browser.");
+        } catch (Exception error) {
+            String message = "No app on this phone can open " + url + ".";
+            setStatus(message);
+            activity.showToast(message, true);
+        }
+    }
+
+    private interface GhostexRemoteSessionLaunchCall {
+        @NonNull
+        GhostexSessionInventoryClient.Result run(@Nullable String password);
+    }
+
+    private void launchRemoteProjectSession(@NonNull GhostexMachine machine,
+                                            @NonNull GhostexDrawerItem projectItem,
+                                            @NonNull String creatingMessage,
+                                            @NonNull GhostexRemoteSessionLaunchCall launchCall,
+                                            @NonNull Runnable retryAction) {
+        /*
+        CDXC:AndroidSidebar 2026-07-12-10:05:
+        Creating a terminal, agent, or quick-action session must give instant
+        feedback: close the drawer and show a persistent progress indicator the
+        moment the user taps, while the SSH create + inventory refresh + attach
+        round trip continues on the background executor. On failure the
+        indicator is dismissed, the error is shown, and the drawer reopens so
+        the user can retry from the same row.
+        */
         long requestGeneration = ++remoteActionGeneration;
-        setStatus("Creating a Ghostex session in " + projectItem.projectTitle + "...");
+        activity.getDrawer().closeDrawers();
+        showRemoteSessionCreatingIndicator(creatingMessage);
+        setStatus(creatingMessage);
         executor.execute(() -> {
             String password = readPassword(machine);
-            GhostexSessionInventoryClient.Result result =
-                inventoryClient.createSession(machine, password, projectItem);
+            GhostexSessionInventoryClient.Result callResult;
+            try {
+                callResult = launchCall.run(password);
+            } catch (Exception error) {
+                callResult = GhostexSessionInventoryClient.Result.failure(
+                    error.getMessage() == null ? "Could not start the Ghostex session." : error.getMessage());
+            }
+            GhostexSessionInventoryClient.Result launchResult = callResult;
             mainHandler.post(() -> {
-                if (!isCurrentRemoteAction(requestGeneration, machine)) return;
-                if (!result.ok) {
-                    String message = result.errorMessage == null ? "Could not create a Ghostex session." : result.errorMessage;
-                    setStatus(message);
-                    maybePromptForPasswordAfterFailure(machine, message, "Retry",
-                        () -> createRemoteSessionForProject(projectItem, machine));
+                if (!isCurrentRemoteAction(requestGeneration, machine)) {
+                    dismissRemoteSessionCreatingIndicator();
                     return;
                 }
-                finishCreateRemoteSession(machine, projectItem, result.createdSessionId, requestGeneration);
+                if (!launchResult.ok) {
+                    dismissRemoteSessionCreatingIndicator();
+                    String message = launchResult.errorMessage == null
+                        ? "Could not start the Ghostex session." : launchResult.errorMessage;
+                    setStatus(message);
+                    activity.showToast(message, true);
+                    activity.getDrawer().openDrawer(Gravity.LEFT);
+                    maybePromptForPasswordAfterFailure(machine, message, "Retry", retryAction);
+                    return;
+                }
+                finishRemoteProjectSessionLaunch(machine, projectItem,
+                    launchResult.createdSessionId, requestGeneration);
             });
         });
     }
 
-    private void finishCreateRemoteSession(@NonNull GhostexMachine machine,
-                                           @NonNull GhostexDrawerItem projectItem,
-                                           @Nullable String createdSessionId,
-                                           long requestGeneration) {
+    private void finishRemoteProjectSessionLaunch(@NonNull GhostexMachine machine,
+                                                  @NonNull GhostexDrawerItem projectItem,
+                                                  @Nullable String createdSessionId,
+                                                  long requestGeneration) {
         executor.execute(() -> {
             String password = readPassword(machine);
             GhostexSessionInventoryClient.Result inventoryResult =
                 inventoryClient.fetchSessions(machine, password);
             mainHandler.post(() -> {
-                if (!isCurrentRemoteAction(requestGeneration, machine)) return;
+                if (!isCurrentRemoteAction(requestGeneration, machine)) {
+                    dismissRemoteSessionCreatingIndicator();
+                    return;
+                }
                 String successStatus = "Created a Ghostex session in " + projectItem.projectTitle + ".";
                 if (!inventoryResult.ok) {
+                    dismissRemoteSessionCreatingIndicator();
                     setStatus(inventoryResult.errorMessage == null
                         ? successStatus + " Could not refresh the session list."
                         : successStatus + " " + inventoryResult.errorMessage);
                     return;
                 }
-                applyInventorySessions(machine, inventoryResult.sessions, successStatus, true);
+                applyInventorySessions(machine, inventoryResult.sessions, inventoryResult.workspace,
+                    successStatus, true);
                 GhostexRemoteSession createdSession = resolveCreatedSession(
                     inventoryResult.sessions, projectItem, createdSessionId);
+                dismissRemoteSessionCreatingIndicator();
                 if (createdSession != null) {
                     attachRemoteSession(machine, createdSession);
+                } else {
+                    activity.getDrawer().openDrawer(Gravity.LEFT);
                 }
             });
         });
+    }
+
+    private void showRemoteSessionCreatingIndicator(@NonNull String message) {
+        dismissRemoteSessionCreatingIndicator();
+        LinearLayout container = new LinearLayout(activity);
+        container.setOrientation(LinearLayout.HORIZONTAL);
+        container.setGravity(Gravity.CENTER_VERTICAL);
+        container.setPadding(dp(20), dp(20), dp(20), dp(20));
+        ProgressBar progress = new ProgressBar(activity);
+        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(dp(28), dp(28));
+        progressParams.setMarginEnd(dp(14));
+        container.addView(progress, progressParams);
+        TextView text = new TextView(activity);
+        text.setText(message);
+        text.setTextColor(GHOSTEX_TEXT);
+        text.setTextSize(14);
+        container.addView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        AlertDialog dialog = new AlertDialog.Builder(activity)
+            .setView(container)
+            .setCancelable(true)
+            .create();
+        remoteSessionCreatingDialog = dialog;
+        GhostexDialogStyler.show(dialog);
+    }
+
+    private void dismissRemoteSessionCreatingIndicator() {
+        AlertDialog dialog = remoteSessionCreatingDialog;
+        remoteSessionCreatingDialog = null;
+        if (dialog != null && dialog.isShowing()) dialog.dismiss();
     }
 
     @Nullable

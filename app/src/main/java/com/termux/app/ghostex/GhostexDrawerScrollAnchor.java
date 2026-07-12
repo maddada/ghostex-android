@@ -28,6 +28,15 @@ final class GhostexDrawerScrollAnchor {
         if (item.type == GhostexDrawerItem.Type.PROJECT_SESSION_LIST_TOGGLE) {
             return "project-session-toggle:" + item.projectKey;
         }
+        if (item.type == GhostexDrawerItem.Type.GROUP_HEADER) {
+            return "group:" + item.groupCollapseKey;
+        }
+        if (item.type == GhostexDrawerItem.Type.PROJECT_AGENTS_ROW) {
+            return "project-agents:" + item.projectKey;
+        }
+        if (item.type == GhostexDrawerItem.Type.PROJECT_EMPTY) {
+            return "project-empty:" + item.projectKey;
+        }
         if (item.type == GhostexDrawerItem.Type.SESSION && item.session != null) {
             return "session:" + item.session.sessionId;
         }
