@@ -8,6 +8,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -26,12 +27,18 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
     private static final int VIEW_TYPE_SESSION = 1;
     private static final int VIEW_TYPE_STATE_CARD = 2;
     private static final int VIEW_TYPE_PROJECT_SESSION_LIST_TOGGLE = 3;
+    private static final int VIEW_TYPE_GROUP_HEADER = 4;
+    private static final int VIEW_TYPE_PROJECT_AGENTS_ROW = 5;
+    private static final int VIEW_TYPE_PROJECT_EMPTY = 6;
     private String currentMachineId;
     private String activeSessionKey;
     private OnProjectSessionCreateListener projectSessionCreateListener;
     private OnProjectActionsListener projectActionsListener;
     private OnProjectToggleListener projectToggleListener;
     private OnProjectSessionListToggleListener projectSessionListToggleListener;
+    private OnGroupToggleListener groupToggleListener;
+    private OnAgentLaunchListener agentLaunchListener;
+    private OnQuickActionListener quickActionListener;
 
     public interface OnProjectSessionCreateListener {
         void onCreateProjectSession(@NonNull GhostexDrawerItem item);
@@ -47,6 +54,20 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
 
     public interface OnProjectSessionListToggleListener {
         void onToggleProjectSessionList(@NonNull GhostexDrawerItem item);
+    }
+
+    public interface OnGroupToggleListener {
+        void onToggleGroup(@NonNull GhostexDrawerItem item);
+    }
+
+    public interface OnAgentLaunchListener {
+        void onLaunchAgent(@NonNull GhostexDrawerItem item,
+                           @NonNull GhostexWorkspaceInventory.AgentLauncher agent);
+    }
+
+    public interface OnQuickActionListener {
+        void onRunQuickAction(@NonNull GhostexDrawerItem item,
+                              @NonNull GhostexWorkspaceInventory.QuickAction action);
     }
 
     /*
@@ -171,6 +192,18 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         projectSessionListToggleListener = listener;
     }
 
+    public void setOnGroupToggleListener(@Nullable OnGroupToggleListener listener) {
+        groupToggleListener = listener;
+    }
+
+    public void setOnAgentLaunchListener(@Nullable OnAgentLaunchListener listener) {
+        agentLaunchListener = listener;
+    }
+
+    public void setOnQuickActionListener(@Nullable OnQuickActionListener listener) {
+        quickActionListener = listener;
+    }
+
     public void setCurrentMachineId(@Nullable String value) {
         currentMachineId = value;
         notifyDataSetChanged();
@@ -205,7 +238,7 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
 
     @Override
     public int getViewTypeCount() {
-        return 4;
+        return 7;
     }
 
     @Override
@@ -215,6 +248,11 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         if (item != null && item.type == GhostexDrawerItem.Type.PROJECT_SESSION_LIST_TOGGLE) {
             return VIEW_TYPE_PROJECT_SESSION_LIST_TOGGLE;
         }
+        if (item != null && item.type == GhostexDrawerItem.Type.GROUP_HEADER) return VIEW_TYPE_GROUP_HEADER;
+        if (item != null && item.type == GhostexDrawerItem.Type.PROJECT_AGENTS_ROW) {
+            return VIEW_TYPE_PROJECT_AGENTS_ROW;
+        }
+        if (item != null && item.type == GhostexDrawerItem.Type.PROJECT_EMPTY) return VIEW_TYPE_PROJECT_EMPTY;
         return item != null && item.type == GhostexDrawerItem.Type.PROJECT_HEADER
             ? VIEW_TYPE_PROJECT_HEADER
             : VIEW_TYPE_SESSION;
@@ -237,6 +275,15 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         }
         if (item != null && item.type == GhostexDrawerItem.Type.PROJECT_SESSION_LIST_TOGGLE) {
             return getProjectSessionListToggleView(item, convertView, parent);
+        }
+        if (item != null && item.type == GhostexDrawerItem.Type.GROUP_HEADER) {
+            return getGroupHeaderView(item, convertView, parent);
+        }
+        if (item != null && item.type == GhostexDrawerItem.Type.PROJECT_AGENTS_ROW) {
+            return getProjectAgentsRowView(item, convertView, parent);
+        }
+        if (item != null && item.type == GhostexDrawerItem.Type.PROJECT_EMPTY) {
+            return getProjectEmptyView(item, convertView, parent);
         }
         return getSessionView(item, convertView, parent);
     }
@@ -306,6 +353,94 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         return row;
     }
 
+    /*
+    CDXC:AndroidSidebar 2026-07-12-10:05:
+    Named GPUI workspace groups render as compact indented disclosure rows
+    between a project's implicit main sessions and the group's session rows.
+    They follow the project-header pattern: tapping the whole row toggles
+    collapse through a dedicated listener so the drawer's ListView click
+    handling stays reserved for session attach and state-card recovery.
+    */
+    private View getGroupHeaderView(@NonNull GhostexDrawerItem item, View convertView,
+                                    @NonNull ViewGroup parent) {
+        TextView row = convertView instanceof TextView && "groupHeader".equals(convertView.getTag())
+            ? (TextView) convertView
+            : createGroupHeader(parent);
+        String label = item.collapsed
+            ? item.groupTitle + " (" + item.sessionCount + ")"
+            : item.groupTitle;
+        row.setText(label);
+        row.setOnClickListener(view -> {
+            if (groupToggleListener != null) {
+                groupToggleListener.onToggleGroup(item);
+            }
+        });
+        row.setContentDescription(GhostexAccessibilityCopy.join(
+            item.groupTitle + " group in " + item.projectTitle,
+            item.collapsed ? "Collapsed. Tap to expand." : "Expanded. Tap to collapse."));
+        return row;
+    }
+
+    /*
+    CDXC:AndroidSidebar 2026-07-12-10:05:
+    The agents isle is one horizontally scrollable chip row under the project
+    header: global agent launchers first, then the project's configured quick
+    actions. Chips reuse the session agent icon registry and fall back to
+    text-only pills when no drawable resolves, so desktop-added agents stay
+    launchable before Android ships their logo.
+    */
+    private View getProjectAgentsRowView(@NonNull GhostexDrawerItem item, View convertView,
+                                         @NonNull ViewGroup parent) {
+        HorizontalScrollView row = convertView instanceof HorizontalScrollView &&
+            "projectAgentsRow".equals(convertView.getTag())
+            ? (HorizontalScrollView) convertView
+            : createProjectAgentsRow(parent);
+        LinearLayout chips = (LinearLayout) row.findViewWithTag("projectAgentsRowChips");
+        chips.removeAllViews();
+        Context context = parent.getContext();
+        for (GhostexWorkspaceInventory.AgentLauncher agent : item.agents) {
+            LinearLayout chip = createLauncherChip(context, agent.displayName(),
+                GhostexSessionAgentIcon.drawableResForIconId(agent.icon, agent.agentId),
+                GhostexSessionAgentIcon.tintColorForIconId(agent.icon, agent.agentId));
+            chip.setContentDescription("Start a " + agent.displayName() + " session in " + item.projectTitle);
+            chip.setOnClickListener(view -> {
+                if (agentLaunchListener != null) {
+                    agentLaunchListener.onLaunchAgent(item, agent);
+                }
+            });
+            chips.addView(chip, launcherChipParams(context));
+        }
+        for (GhostexWorkspaceInventory.QuickAction action : item.quickActions) {
+            String fallbackIcon = action.isBrowser() ? "browser" : "terminal";
+            String iconId = action.icon.isEmpty() ? fallbackIcon : action.icon;
+            LinearLayout chip = createLauncherChip(context, action.displayName(),
+                GhostexSessionAgentIcon.drawableResForIconId(iconId, fallbackIcon),
+                GhostexSessionAgentIcon.tintColorForIconId(iconId, fallbackIcon));
+            chip.setContentDescription(action.isBrowser()
+                ? "Open " + action.displayName() + " in the browser"
+                : "Run " + action.displayName() + " in " + item.projectTitle);
+            chip.setOnClickListener(view -> {
+                if (quickActionListener != null) {
+                    quickActionListener.onRunQuickAction(item, action);
+                }
+            });
+            chips.addView(chip, launcherChipParams(context));
+        }
+        row.scrollTo(0, 0);
+        return row;
+    }
+
+    private View getProjectEmptyView(@NonNull GhostexDrawerItem item, View convertView,
+                                     @NonNull ViewGroup parent) {
+        TextView row = convertView instanceof TextView && "projectEmpty".equals(convertView.getTag())
+            ? (TextView) convertView
+            : createProjectEmptyRow(parent);
+        row.setText("No sessions yet. Tap + to create one.");
+        row.setContentDescription(item.projectTitle +
+            " has no sessions. Use the plus button in the project header to create one.");
+        return row;
+    }
+
     private View getSessionView(@Nullable GhostexDrawerItem item, View convertView,
                                 @NonNull ViewGroup parent) {
         LinearLayout row = convertView instanceof LinearLayout && "session".equals(convertView.getTag())
@@ -337,6 +472,92 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         row.setContentDescription(GhostexAccessibilityCopy.join(title.getText().toString(),
             statusDescription(session),
             "Tap to attach. Long press for actions."));
+        return row;
+    }
+
+    private TextView createGroupHeader(@NonNull ViewGroup parent) {
+        Context context = parent.getContext();
+        TextView row = new TextView(context);
+        row.setTag("groupHeader");
+        row.setTextColor(GhostexPalette.MUTED);
+        row.setTextSize(13);
+        row.setTypeface(Typeface.DEFAULT_BOLD);
+        row.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+        row.setSingleLine(true);
+        row.setEllipsize(TextUtils.TruncateAt.END);
+        row.setPadding(dp(context, 14), dp(context, 10), dp(context, 12), dp(context, 4));
+        row.setMinHeight(dp(context, 34));
+        row.setClickable(true);
+        row.setFocusable(true);
+        return row;
+    }
+
+    private HorizontalScrollView createProjectAgentsRow(@NonNull ViewGroup parent) {
+        Context context = parent.getContext();
+        HorizontalScrollView row = new HorizontalScrollView(context);
+        row.setTag("projectAgentsRow");
+        row.setHorizontalScrollBarEnabled(false);
+        row.setFillViewport(false);
+        LinearLayout chips = new LinearLayout(context);
+        chips.setTag("projectAgentsRowChips");
+        chips.setOrientation(LinearLayout.HORIZONTAL);
+        chips.setGravity(Gravity.CENTER_VERTICAL);
+        chips.setPadding(dp(context, 6), dp(context, 4), dp(context, 6), dp(context, 6));
+        row.addView(chips, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT));
+        return row;
+    }
+
+    private LinearLayout createLauncherChip(@NonNull Context context, @NonNull String label,
+                                            int drawableRes, int tint) {
+        LinearLayout chip = new LinearLayout(context);
+        chip.setOrientation(LinearLayout.HORIZONTAL);
+        chip.setGravity(Gravity.CENTER_VERTICAL);
+        chip.setPadding(dp(context, 10), dp(context, 6), dp(context, 10), dp(context, 6));
+        chip.setMinimumHeight(dp(context, 32));
+        chip.setBackground(pillBackground(context));
+        chip.setClickable(true);
+        chip.setFocusable(true);
+        if (drawableRes != 0) {
+            ImageView icon = new ImageView(context);
+            icon.setImageResource(drawableRes);
+            icon.setColorFilter(tint);
+            icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            LinearLayout.LayoutParams iconParams =
+                new LinearLayout.LayoutParams(dp(context, 15), dp(context, 15));
+            iconParams.setMarginEnd(dp(context, 6));
+            chip.addView(icon, iconParams);
+        }
+        TextView text = new TextView(context);
+        text.setText(label);
+        text.setTextColor(GhostexPalette.FOREGROUND);
+        text.setTextSize(12);
+        text.setSingleLine(true);
+        text.setEllipsize(TextUtils.TruncateAt.END);
+        chip.addView(text, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT));
+        return chip;
+    }
+
+    private LinearLayout.LayoutParams launcherChipParams(@NonNull Context context) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.setMarginEnd(dp(context, 6));
+        return params;
+    }
+
+    private TextView createProjectEmptyRow(@NonNull ViewGroup parent) {
+        Context context = parent.getContext();
+        TextView row = new TextView(context);
+        row.setTag("projectEmpty");
+        row.setTextColor(GhostexPalette.MUTED);
+        row.setTextSize(12);
+        row.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+        row.setSingleLine(true);
+        row.setEllipsize(TextUtils.TruncateAt.END);
+        row.setPadding(dp(context, 12), dp(context, 6), dp(context, 12), dp(context, 8));
+        row.setMinHeight(dp(context, 32));
         return row;
     }
 

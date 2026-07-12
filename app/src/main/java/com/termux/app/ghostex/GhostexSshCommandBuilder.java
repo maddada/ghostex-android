@@ -225,6 +225,46 @@ public final class GhostexSshCommandBuilder {
         return join(remoteParts);
     }
 
+    public static String createAgentSessionRemoteCommand(@Nullable String agentId,
+                                                         @Nullable String projectId) {
+        /*
+        CDXC:AndroidSidebar 2026-07-12-10:05:
+        Agent launches are project-scoped Mac-side CLI actions. Validate both
+        ids at the command boundary, like session actions, so drawer UI changes
+        can never send an empty agent or project selector over SSH.
+        */
+        String cleanAgentId = agentId == null ? "" : agentId.trim();
+        if (cleanAgentId.isEmpty()) {
+            throw new IllegalArgumentException("Ghostex agent id is required.");
+        }
+        String cleanProjectId = projectId == null ? "" : projectId.trim();
+        if (cleanProjectId.isEmpty()) {
+            throw new IllegalArgumentException("Ghostex project id is required.");
+        }
+        return "ghostex create-agent " + shellQuote(cleanAgentId) +
+            " --project-id " + shellQuote(cleanProjectId) + " --json";
+    }
+
+    public static String runActionRemoteCommand(@Nullable String commandId,
+                                                @Nullable String projectId) {
+        /*
+        CDXC:AndroidSidebar 2026-07-12-10:05:
+        Quick actions reference desktop-configured command ids. `ghostex
+        run-action` always prints JSON, so no --json flag is needed; Android
+        only invokes it for terminal actions and parses the created session id.
+        */
+        String cleanCommandId = commandId == null ? "" : commandId.trim();
+        if (cleanCommandId.isEmpty()) {
+            throw new IllegalArgumentException("Ghostex quick action command id is required.");
+        }
+        String cleanProjectId = projectId == null ? "" : projectId.trim();
+        if (cleanProjectId.isEmpty()) {
+            throw new IllegalArgumentException("Ghostex project id is required.");
+        }
+        return "ghostex run-action " + shellQuote(cleanCommandId) +
+            " --project-id " + shellQuote(cleanProjectId);
+    }
+
     public static String moveProjectRemoteCommand(@Nullable String projectId,
                                                   @NonNull String direction) {
         String cleanProjectId = projectId == null ? "" : projectId.trim();

@@ -31,6 +31,7 @@ final class GhostexSessionAgentIcon {
         register("opencode", R.drawable.ic_ghostex_agent_opencode, 0xFF6D96C0);
         register("pi", R.drawable.ic_ghostex_agent_pi, 0xFFC8FF62);
         register("t3", R.drawable.ic_ghostex_agent_t3, 0xFFFF6AF3);
+        register("terminal", R.drawable.ic_ghostex_agent_terminal, GhostexPalette.FOREGROUND);
     }
 
     private GhostexSessionAgentIcon() {}
@@ -67,6 +68,29 @@ final class GhostexSessionAgentIcon {
     @ColorInt
     static int tintColorForSession(@NonNull GhostexRemoteSession session) {
         String iconId = resolveIconId(session.agentIcon, session.agent);
+        if (iconId == null) return GhostexPalette.FOREGROUND;
+        Integer color = COLOR_BY_ICON.get(iconId);
+        return color == null ? GhostexPalette.FOREGROUND : color;
+    }
+
+    /*
+    CDXC:AndroidSidebar 2026-07-12-10:05:
+    The agents isle and quick action chips reuse the session icon registry so
+    the same agent renders identically in session rows and launcher chips.
+    Returning 0 when nothing resolves lets chips fall back to text-only instead
+    of forcing the terminal glyph onto browser/custom quick actions.
+    */
+    @DrawableRes
+    static int drawableResForIconId(@Nullable String icon, @Nullable String name) {
+        String iconId = resolveIconId(icon, name);
+        if (iconId == null) return 0;
+        Integer drawable = DRAWABLE_BY_ICON.get(iconId);
+        return drawable == null ? 0 : drawable;
+    }
+
+    @ColorInt
+    static int tintColorForIconId(@Nullable String icon, @Nullable String name) {
+        String iconId = resolveIconId(icon, name);
         if (iconId == null) return GhostexPalette.FOREGROUND;
         Integer color = COLOR_BY_ICON.get(iconId);
         return color == null ? GhostexPalette.FOREGROUND : color;

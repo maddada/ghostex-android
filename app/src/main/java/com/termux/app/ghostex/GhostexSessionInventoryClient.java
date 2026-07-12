@@ -121,26 +121,33 @@ public final class GhostexSessionInventoryClient {
         public final String errorMessage;
         public final List<GhostexRemoteSession> sessions;
         @Nullable public final String createdSessionId;
+        @Nullable public final GhostexWorkspaceInventory workspace;
 
         private Result(boolean ok, @Nullable String errorMessage,
                        @NonNull List<GhostexRemoteSession> sessions,
-                       @Nullable String createdSessionId) {
+                       @Nullable String createdSessionId,
+                       @Nullable GhostexWorkspaceInventory workspace) {
             this.ok = ok;
             this.errorMessage = errorMessage;
             this.sessions = sessions;
             this.createdSessionId = createdSessionId;
+            this.workspace = workspace;
         }
 
         public static Result success(@NonNull List<GhostexRemoteSession> sessions) {
-            return new Result(true, null, sessions, null);
+            return new Result(true, null, sessions, null, null);
+        }
+
+        public static Result successWorkspace(@NonNull GhostexWorkspaceInventory workspace) {
+            return new Result(true, null, workspace.sessions, null, workspace);
         }
 
         public static Result createSuccess(@Nullable String createdSessionId) {
-            return new Result(true, null, new ArrayList<>(), createdSessionId);
+            return new Result(true, null, new ArrayList<>(), createdSessionId, null);
         }
 
         public static Result failure(@NonNull String errorMessage) {
-            return new Result(false, errorMessage, new ArrayList<>(), null);
+            return new Result(false, errorMessage, new ArrayList<>(), null, null);
         }
     }
 
@@ -154,7 +161,7 @@ public final class GhostexSessionInventoryClient {
             if (commandResult.exitCode != 0) {
                 return Result.failure(summarizeFailure(commandResult.output, hasPassword(password)));
             }
-            return Result.success(parseSessions(commandResult.output));
+            return Result.successWorkspace(parseWorkspaceInventory(commandResult.output));
         } catch (Exception error) {
             return Result.failure(error.getMessage() == null ? "Could not load Ghostex sessions." : error.getMessage());
         }
@@ -256,6 +263,57 @@ public final class GhostexSessionInventoryClient {
         }
     }
 
+    public Result createAgentSession(@NonNull GhostexMachine machine, @Nullable String password,
+                                     @NonNull String projectId, @NonNull String agentId) {
+        /*
+        CDXC:AndroidSidebar 2026-07-12-10:05:
+        The agents isle launches Mac-side agent sessions through the same
+        non-interactive SSH command path as terminal creation. `ghostex
+        create-agent` creates and starts the session, so Android only needs the
+        returned stable session id to refresh the inventory and attach.
+        */
+        try {
+            GhostexSshTransport.CommandResult commandResult = runRemoteGhostexCommand(machine, password,
+                GhostexSshCommandBuilder.createAgentSessionRemoteCommand(agentId, projectId),
+                "zmx=none op=createAgent agent=" + agentId);
+            if (commandResult.timedOut) {
+                return Result.failure(GhostexRemoteTimeoutCopy.sessionAction("create agent session"));
+            }
+            if (commandResult.exitCode != 0) {
+                return Result.failure(summarizeFailure(commandResult.output, hasPassword(password)));
+            }
+            return Result.createSuccess(parseCreatedSessionId(commandResult.output));
+        } catch (Exception error) {
+            return Result.failure(error.getMessage() == null ? "Could not start the agent session." : error.getMessage());
+        }
+    }
+
+    public Result runProjectAction(@NonNull GhostexMachine machine, @Nullable String password,
+                                   @NonNull String projectId, @NonNull String commandId) {
+        /*
+        CDXC:AndroidSidebar 2026-07-12-10:05:
+        Terminal quick actions run `ghostex run-action`, which creates and
+        starts a terminal session running the configured command and returns
+        the same created-session JSON shape as create-session. Browser actions
+        never reach this path because the summary payload already carries the
+        URL for a local ACTION_VIEW intent.
+        */
+        try {
+            GhostexSshTransport.CommandResult commandResult = runRemoteGhostexCommand(machine, password,
+                GhostexSshCommandBuilder.runActionRemoteCommand(commandId, projectId),
+                "zmx=none op=runAction command=" + commandId);
+            if (commandResult.timedOut) {
+                return Result.failure(GhostexRemoteTimeoutCopy.sessionAction("run this action"));
+            }
+            if (commandResult.exitCode != 0) {
+                return Result.failure(summarizeFailure(commandResult.output, hasPassword(password)));
+            }
+            return Result.createSuccess(parseCreatedSessionId(commandResult.output));
+        } catch (Exception error) {
+            return Result.failure(error.getMessage() == null ? "Could not run this project action." : error.getMessage());
+        }
+    }
+
     public Result moveProject(@NonNull GhostexMachine machine, @Nullable String password,
                               @NonNull GhostexDrawerItem projectItem,
                               @NonNull String direction) {
@@ -293,15 +351,27 @@ public final class GhostexSessionInventoryClient {
     }
 
     static List<GhostexRemoteSession> parseSessions(@NonNull String output) throws Exception {
+        return parseWorkspaceInventory(output).sessions;
+    }
+
+    /*
+    CDXC:AndroidSidebar 2026-07-12-10:05:
+    The mobile summary now carries the whole desktop sidebar shape beside the
+    sessions array: active projects, workspaceGroups, agents, and per-project
+    quick actions. Parse them from the same resilient JSON object so old Mac
+    CLIs that only send sessions keep working unchanged.
+    */
+    static GhostexWorkspaceInventory parseWorkspaceInventory(@NonNull String output) throws Exception {
         JSONObject root = extractSessionListJsonObject(output);
         JSONArray array = root.optJSONArray("sessions");
         ArrayList<GhostexRemoteSession> sessions = new ArrayList<>();
-        if (array == null) return sessions;
-        for (int i = 0; i < array.length(); i++) {
-            GhostexRemoteSession session = GhostexRemoteSession.fromJson(array.optJSONObject(i));
-            if (session != null && session.isZmxBacked()) sessions.add(session);
+        if (array != null) {
+            for (int i = 0; i < array.length(); i++) {
+                GhostexRemoteSession session = GhostexRemoteSession.fromJson(array.optJSONObject(i));
+                if (session != null && session.isZmxBacked()) sessions.add(session);
+            }
         }
-        return sessions;
+        return GhostexWorkspaceInventory.fromJson(root, sessions);
     }
 
     static JSONObject extractSessionListJsonObject(@NonNull String output) throws Exception {
