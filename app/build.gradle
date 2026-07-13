@@ -1354,7 +1354,11 @@ task verifyGhostexReleaseDrawerSurface() {
             !controllerText.contains("showProjectContextMenu(item, machineStore.getLastMachine())")) {
             violations.add(controllerFile.name + ": project overflow button must open the existing project action sheet")
         }
-        if (!controllerText.contains("finishCreateRemoteSession") ||
+        if (!controllerText.contains("launchRemoteProjectSession") ||
+            !controllerText.contains("activity.getDrawer().closeDrawers()") ||
+            !controllerText.contains("finishRemoteProjectSessionLaunch") ||
+            !controllerText.contains("inventoryClient.fetchSessions(machine, password)") ||
+            !controllerText.contains("applyInventorySessions(machine, inventoryResult.sessions, inventoryResult.workspace") ||
             !controllerText.contains("resolveCreatedSession") ||
             !controllerText.contains("attachRemoteSession(machine, createdSession)")) {
             violations.add(controllerFile.name + ": project-header create-session must refresh inventory, attach the created session, and close the drawer")
@@ -1367,7 +1371,7 @@ task verifyGhostexReleaseDrawerSurface() {
         }
         if (!controllerText.contains("collapsedProjectKeys") ||
             !controllerText.contains("collapsedProjectSessionListKeys") ||
-            !controllerText.contains("GhostexDrawerItem.buildItems(remoteSessions, collapsedProjectKeys,") ||
+            !controllerText.contains("GhostexDrawerItem.buildItems(remoteSessions, workspaceInventory,") ||
             !controllerText.contains("toggleProjectCollapsed") ||
             !controllerText.contains("toggleProjectSessionListCollapsed") ||
             !controllerText.contains("Move project up") ||
