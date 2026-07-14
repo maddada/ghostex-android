@@ -171,12 +171,19 @@ public final class GhostexSshCommandBuilder {
         resolution before launching the provider. Live zmx rows already carry
         the provider session name, so Android should attach directly to zmx and
         reserve the CLI selector path for rows without live provider identity.
+
+        CDXC:AndroidRemoteAttach 2026-07-14:
+        A phone attach must ask zmx for only the active viewport. Replaying the
+        full desktop-sized scrollback into Android's smaller PTY can leave the
+        alternate screen empty before the post-attach redraw is available.
+        `--visible-only` makes zmx resize first and serialize the phone-sized
+        viewport, which is the mobile restore contract implemented by our fork.
         */
         String sessionId = requireSessionId(session);
         String providerSessionName = session.providerSessionName == null ? "" : session.providerSessionName.trim();
         if (session.isZmxBacked() && !providerSessionName.isEmpty() &&
             ("exists".equals(session.providerSessionState) || session.isLive)) {
-            return "exec zmx attach " + shellQuote(providerSessionName);
+            return "exec zmx attach --visible-only " + shellQuote(providerSessionName);
         }
         String projectId = session.projectId == null ? "" : session.projectId.trim();
         String projectFlag = projectId.isEmpty() ? "" : " --project-id " + shellQuote(projectId);
