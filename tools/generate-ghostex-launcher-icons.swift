@@ -32,7 +32,7 @@ let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 let macIconSource = root
     .deletingLastPathComponent()
     .deletingLastPathComponent()
-    .appendingPathComponent("native/macos/ghostexHost/Resources/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png")
+    .appendingPathComponent("gpui/resources/AppIcon.appiconset/icon_512x512@2x.png")
 let densities: [(directory: String, size: Int)] = [
     ("mipmap-mdpi", 48),
     ("mipmap-hdpi", 72),
