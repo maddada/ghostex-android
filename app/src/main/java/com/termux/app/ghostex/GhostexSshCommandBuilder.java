@@ -34,12 +34,12 @@ public final class GhostexSshCommandBuilder {
     instead of positional selector text. This keeps Android wake, sleep, kill,
     focus, and rename on one stable-id CLI contract.
 
-    CDXC:AndroidRemoteAttachLatency 2026-06-30-19:16:
-    Android attach taps should avoid the Mac-side `ghostex attach --session-id`
-    selector lookup when the row already includes a live zmx provider session
-    name. Keep stable session id validation for every attach row, but use the
-    direct zmx provider attach path for live rows so opening a terminal does not
-    wait for a full remote inventory.
+    CDXC:AndroidRemoteAttach 2026-07-15:
+    Mobile inventory liveness describes the gxserver session row, not the
+    current zmx socket. Always attach through the stable Ghostex session id so
+    gxserver resolves fresh provider metadata and launches its pinned bundled
+    zmx. Calling PATH `zmx` directly can target a missing provider or an older
+    incompatible zmx binary and make the external terminal exit immediately.
 
     CDXC:AndroidConnectionManagement 2026-05-17-14:07:
     Check connection should prove the first-release ZMX dependency, not only SSH
@@ -166,25 +166,14 @@ public final class GhostexSshCommandBuilder {
         resolves the exact full server/project/session zmx route instead of a
         bare session id that can collide across projects.
 
-        CDXC:AndroidRemoteAttachLatency 2026-06-30-19:16:
-        The stable-id Ghostex CLI attach command performs a session-list
-        resolution before launching the provider. Live zmx rows already carry
-        the provider session name, so Android should attach directly to zmx and
-        reserve the CLI selector path for rows without live provider identity.
-
-        CDXC:AndroidRemoteAttach 2026-07-14:
-        A phone attach must ask zmx for only the active viewport. Replaying the
-        full desktop-sized scrollback into Android's smaller PTY can leave the
-        alternate screen empty before the post-attach redraw is available.
-        `--visible-only` makes zmx resize first and serialize the phone-sized
-        viewport, which is the mobile restore contract implemented by our fork.
+        CDXC:AndroidRemoteAttach 2026-07-15:
+        `isLive` is gxserver row state and can remain true after the provider
+        socket disappears. Do not treat the mobile summary's cached provider
+        name as executable attach metadata. The stable CLI contract refreshes
+        attach metadata, handles missing-provider resume, and uses gxserver's
+        pinned bundled zmx instead of whichever zmx appears on login-shell PATH.
         */
         String sessionId = requireSessionId(session);
-        String providerSessionName = session.providerSessionName == null ? "" : session.providerSessionName.trim();
-        if (session.isZmxBacked() && !providerSessionName.isEmpty() &&
-            ("exists".equals(session.providerSessionState) || session.isLive)) {
-            return "exec zmx attach --require-existing --visible-only " + shellQuote(providerSessionName);
-        }
         String projectId = session.projectId == null ? "" : session.projectId.trim();
         String projectFlag = projectId.isEmpty() ? "" : " --project-id " + shellQuote(projectId);
         return "ghostex attach --session-id " + shellQuote(sessionId) + projectFlag;
