@@ -183,7 +183,7 @@ public final class GhostexSshCommandBuilder {
         String providerSessionName = session.providerSessionName == null ? "" : session.providerSessionName.trim();
         if (session.isZmxBacked() && !providerSessionName.isEmpty() &&
             ("exists".equals(session.providerSessionState) || session.isLive)) {
-            return "exec zmx attach --visible-only " + shellQuote(providerSessionName);
+            return "exec zmx attach --require-existing --visible-only " + shellQuote(providerSessionName);
         }
         String projectId = session.projectId == null ? "" : session.projectId.trim();
         String projectFlag = projectId.isEmpty() ? "" : " --project-id " + shellQuote(projectId);

@@ -95,7 +95,8 @@ public final class GhostexSshCommandBuilderTest {
         Assert.assertTrue(command.contains("'madda@mac.tailnet.ts.net'"));
         String quotedRemoteCommand = GhostexSshCommandBuilder.shellQuote(
             GhostexSshCommandBuilder.loginShellCommand(
-                "exec zmx attach " + GhostexSshCommandBuilder.shellQuote(session.providerSessionName)));
+                "exec zmx attach --require-existing --visible-only " +
+                    GhostexSshCommandBuilder.shellQuote(session.providerSessionName)));
         Assert.assertTrue(command.contains(quotedRemoteCommand));
         Assert.assertFalse(command.contains("ghostex attach " + GhostexSshCommandBuilder.shellQuote(session.alias)));
     }
@@ -112,7 +113,7 @@ public final class GhostexSshCommandBuilderTest {
 
         String command = GhostexSshCommandBuilder.attachRemoteCommand(session);
 
-        Assert.assertEquals("exec zmx attach " +
+        Assert.assertEquals("exec zmx attach --require-existing --visible-only " +
             GhostexSshCommandBuilder.shellQuote(session.providerSessionName), command);
         Assert.assertFalse(command.contains("ghostex attach --session-id"));
     }
