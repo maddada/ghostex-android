@@ -21,9 +21,9 @@ public final class GhostexSshCommandBuilderTest {
     Rename should be a tested command-builder path because it accepts user text
     and runs remotely through SSH.
 
-    CDXC:AndroidRemoteSessions 2026-05-17-12:41:
-    The Mac-side command should run under `/bin/zsh -lc` so SSH sees the same
-    login-shell PATH where Homebrew-installed `ghostex` is normally available.
+    CDXC:AndroidRemoteSessions 2026-07-17:
+    Remote commands should run under the account's configured login shell so
+    macOS keeps its Homebrew-aware zsh PATH while Linux does not require zsh.
 
     CDXC:AndroidConnectionManagement 2026-05-17-14:03:
     Saved-machine Check connection uses a remote Ghostex CLI readiness command,
@@ -255,7 +255,7 @@ public final class GhostexSshCommandBuilderTest {
 
     @Test
     public void loginShellCommandQuotesNestedRemoteCommand() {
-        Assert.assertEquals("/bin/zsh -lc 'ghostex attach --session-id '\"'\"'session-1'\"'\"''",
+        Assert.assertEquals("\"$SHELL\" -lc 'ghostex attach --session-id '\"'\"'session-1'\"'\"''",
             GhostexSshCommandBuilder.loginShellCommand("ghostex attach --session-id " + GhostexSshCommandBuilder.shellQuote("session-1")));
     }
 

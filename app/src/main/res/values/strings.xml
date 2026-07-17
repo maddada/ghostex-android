@@ -124,6 +124,7 @@
     <string name="ghostex_drawer_settings">Settings</string>
     <string name="ghostex_settings_status">Edit terminal behavior and remote-session alerts.</string>
     <string name="ghostex_drawer_refresh_sessions">Refresh sessions</string>
+    <string name="ghostex_drawer_recent_projects">Recent Projects</string>
     <string name="ghostex_drawer_tailscale">Tailscale</string>
     <string name="ghostex_drawer_setup">Setup</string>
     <string name="ghostex_drawer_retry">Retry</string>

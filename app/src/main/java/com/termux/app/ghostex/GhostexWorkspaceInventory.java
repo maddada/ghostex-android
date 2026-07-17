@@ -17,14 +17,16 @@ public final class GhostexWorkspaceInventory {
     /*
     CDXC:AndroidSidebar 2026-07-12-10:05:
     The mobile summary payload now mirrors the GPUI desktop sidebar: pre-sorted
-    sessions with sortOrder, the full active-project list (including projects
-    with zero sessions), named workspace groups, the global agent launcher list,
-    and per-project quick actions. Parse all of it defensively in one holder so
-    older Mac CLIs that omit these fields keep the legacy Android drawer
+    sessions with sortOrder, active project metadata, named workspace groups,
+    the global agent launcher list, per-project quick actions, and explicit
+    recent projects. Active projects remain visible with zero sessions; chat
+    projects are marked for one synthetic Chats collection. Parse all of it in one
+    holder so older CLIs that omit these fields keep the legacy Android drawer
     behavior without any feature flags.
     */
     public final List<GhostexRemoteSession> sessions;
     public final List<Project> projects;
+    public final List<RecentProject> recentProjects;
     public final List<String> projectOrder;
     public final Map<String, List<SessionGroup>> groupsByProjectId;
     public final List<AgentLauncher> agents;
@@ -33,6 +35,7 @@ public final class GhostexWorkspaceInventory {
 
     private GhostexWorkspaceInventory(@NonNull List<GhostexRemoteSession> sessions,
                                       @NonNull List<Project> projects,
+                                      @NonNull List<RecentProject> recentProjects,
                                       @NonNull List<String> projectOrder,
                                       @NonNull Map<String, List<SessionGroup>> groupsByProjectId,
                                       @NonNull List<AgentLauncher> agents,
@@ -40,6 +43,7 @@ public final class GhostexWorkspaceInventory {
                                       boolean preserveSessionOrder) {
         this.sessions = sessions;
         this.projects = projects;
+        this.recentProjects = recentProjects;
         this.projectOrder = projectOrder;
         this.groupsByProjectId = groupsByProjectId;
         this.agents = agents;
@@ -51,7 +55,7 @@ public final class GhostexWorkspaceInventory {
     static GhostexWorkspaceInventory fromJson(@Nullable JSONObject root,
                                               @NonNull List<GhostexRemoteSession> sessions) {
         if (root == null) {
-            return new GhostexWorkspaceInventory(sessions, Collections.emptyList(),
+            return new GhostexWorkspaceInventory(sessions, Collections.emptyList(), Collections.emptyList(),
                 Collections.emptyList(), Collections.emptyMap(), Collections.emptyList(),
                 Collections.emptyMap(), false);
         }
@@ -61,6 +65,7 @@ public final class GhostexWorkspaceInventory {
         return new GhostexWorkspaceInventory(
             sessions,
             parseProjects(root.optJSONArray("projects")),
+            parseRecentProjects(root.optJSONArray("recentProjects")),
             parseProjectOrder(workspaceGroups),
             parseGroupsByProjectId(workspaceGroups),
             parseAgents(root.optJSONArray("agents")),
@@ -86,7 +91,35 @@ public final class GhostexWorkspaceInventory {
             if (json == null) continue;
             String projectId = trimmedValue(json, "projectId");
             if (projectId.isEmpty()) continue;
-            projects.add(new Project(projectId, trimmedValue(json, "name"), trimmedValue(json, "path")));
+            String path = trimmedValue(json, "path");
+            projects.add(new Project(projectId, trimmedValue(json, "name"), path,
+                json.optBoolean("isChat", false) || isChatStoragePath(path)));
+        }
+        return projects;
+    }
+
+    private static boolean isChatStoragePath(@NonNull String path) {
+        String[] segments = path.replace('\\', '/').split("/");
+        for (int i = 1; i < segments.length; i++) {
+            if (!"chats".equals(segments[i])) continue;
+            String owner = segments[i - 1];
+            if ("ghostex".equals(owner) || ".active".equals(owner) || ".ghostex".equals(owner) ||
+                owner.startsWith(".ghostex-")) return true;
+        }
+        return false;
+    }
+
+    @NonNull
+    private static List<RecentProject> parseRecentProjects(@Nullable JSONArray array) {
+        if (array == null) return Collections.emptyList();
+        ArrayList<RecentProject> projects = new ArrayList<>();
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject json = array.optJSONObject(i);
+            if (json == null) continue;
+            String projectId = trimmedValue(json, "projectId");
+            if (projectId.isEmpty()) continue;
+            projects.add(new RecentProject(projectId, trimmedValue(json, "title"),
+                trimmedValue(json, "path"), Math.max(0, json.optInt("sessionCount", 0))));
         }
         return projects;
     }
@@ -185,16 +218,41 @@ public final class GhostexWorkspaceInventory {
         public final String projectId;
         public final String name;
         public final String path;
+        public final boolean isChat;
 
-        Project(@NonNull String projectId, @NonNull String name, @NonNull String path) {
+        Project(@NonNull String projectId, @NonNull String name, @NonNull String path,
+                boolean isChat) {
             this.projectId = projectId;
             this.name = name;
             this.path = path;
+            this.isChat = isChat;
         }
 
         @NonNull
         public String displayName() {
             if (!name.isEmpty()) return name;
+            if (!path.isEmpty()) return path;
+            return "Project";
+        }
+    }
+
+    public static final class RecentProject {
+        public final String projectId;
+        public final String title;
+        public final String path;
+        public final int sessionCount;
+
+        RecentProject(@NonNull String projectId, @NonNull String title,
+                      @NonNull String path, int sessionCount) {
+            this.projectId = projectId;
+            this.title = title;
+            this.path = path;
+            this.sessionCount = sessionCount;
+        }
+
+        @NonNull
+        public String displayTitle() {
+            if (!title.isEmpty()) return title;
             if (!path.isEmpty()) return path;
             return "Project";
         }

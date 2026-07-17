@@ -30,6 +30,7 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
     private static final int VIEW_TYPE_GROUP_HEADER = 4;
     private static final int VIEW_TYPE_PROJECT_AGENTS_ROW = 5;
     private static final int VIEW_TYPE_PROJECT_EMPTY = 6;
+    private static final int VIEW_TYPE_MACHINE_HEADER = 7;
     private String currentMachineId;
     private String activeSessionKey;
     private OnProjectSessionCreateListener projectSessionCreateListener;
@@ -37,6 +38,7 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
     private OnProjectToggleListener projectToggleListener;
     private OnProjectSessionListToggleListener projectSessionListToggleListener;
     private OnGroupToggleListener groupToggleListener;
+    private OnMachineToggleListener machineToggleListener;
     private OnAgentLaunchListener agentLaunchListener;
     private OnQuickActionListener quickActionListener;
 
@@ -58,6 +60,10 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
 
     public interface OnGroupToggleListener {
         void onToggleGroup(@NonNull GhostexDrawerItem item);
+    }
+
+    public interface OnMachineToggleListener {
+        void onToggleMachine(@NonNull GhostexDrawerItem item);
     }
 
     public interface OnAgentLaunchListener {
@@ -196,6 +202,10 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         groupToggleListener = listener;
     }
 
+    public void setOnMachineToggleListener(@Nullable OnMachineToggleListener listener) {
+        machineToggleListener = listener;
+    }
+
     public void setOnAgentLaunchListener(@Nullable OnAgentLaunchListener listener) {
         agentLaunchListener = listener;
     }
@@ -238,13 +248,14 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
 
     @Override
     public int getViewTypeCount() {
-        return 7;
+        return 8;
     }
 
     @Override
     public int getItemViewType(int position) {
         GhostexDrawerItem item = getItem(position);
         if (item != null && item.type == GhostexDrawerItem.Type.STATE_CARD) return VIEW_TYPE_STATE_CARD;
+        if (item != null && item.type == GhostexDrawerItem.Type.MACHINE_HEADER) return VIEW_TYPE_MACHINE_HEADER;
         if (item != null && item.type == GhostexDrawerItem.Type.PROJECT_SESSION_LIST_TOGGLE) {
             return VIEW_TYPE_PROJECT_SESSION_LIST_TOGGLE;
         }
@@ -269,6 +280,9 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         GhostexDrawerItem item = getItem(position);
         if (item != null && item.type == GhostexDrawerItem.Type.STATE_CARD) {
             return getStateCardView(item, convertView, parent);
+        }
+        if (item != null && item.type == GhostexDrawerItem.Type.MACHINE_HEADER) {
+            return getMachineHeaderView(item, convertView, parent);
         }
         if (item != null && item.type == GhostexDrawerItem.Type.PROJECT_HEADER) {
             return getProjectHeaderView(item, convertView, parent);
@@ -330,6 +344,15 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
         TextView create = (TextView) row.findViewWithTag("projectCreate");
         ImageButton actions = (ImageButton) row.findViewWithTag("projectActions");
         title.setText(item.projectTitle);
+        /*
+        CDXC:AndroidSidebar 2026-07-18:
+        The Quick header keeps a create button like the desktop Quick section
+        header, so mobile can start a new projectless chat terminal in one tap.
+        The overflow menu stays project-only because Quick has no project-level
+        move/path actions.
+        */
+        create.setVisibility(View.VISIBLE);
+        actions.setVisibility(item.isChatCollection ? View.GONE : View.VISIBLE);
         row.setOnClickListener(view -> {
             if (projectToggleListener != null) {
                 projectToggleListener.onToggleProject(item);
@@ -348,8 +371,35 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
             }
         });
         row.setContentDescription(GhostexAccessibilityCopy.join(item.projectTitle,
-            item.collapsed ? "Tap to expand. Use plus to create a session. Use more for project actions."
-                : "Tap to collapse. Use plus to create a session. Use more for project actions."));
+            item.isChatCollection
+                ? (item.collapsed ? "Tap to expand. Use plus to create a Quick session."
+                    : "Tap to collapse. Use plus to create a Quick session.")
+                : item.collapsed ? "Tap to expand. Use plus to create a session. Use more for project actions."
+                    : "Tap to collapse. Use plus to create a session. Use more for project actions."));
+        return row;
+    }
+
+    /*
+    CDXC:AndroidSidebar 2026-07-18:
+    Machine headers stack every saved machine's sidebar section in one drawer,
+    mirroring the desktop's per-remote-machine sections. The whole row is a
+    disclosure toggle, matching project and group headers, so the ListView
+    click handling stays reserved for session attach and state-card recovery.
+    */
+    private View getMachineHeaderView(@NonNull GhostexDrawerItem item, View convertView,
+                                      @NonNull ViewGroup parent) {
+        TextView row = convertView instanceof TextView && "machineHeader".equals(convertView.getTag())
+            ? (TextView) convertView
+            : createMachineHeader(parent);
+        row.setText(item.collapsed ? item.projectTitle + " …" : item.projectTitle);
+        row.setOnClickListener(view -> {
+            if (machineToggleListener != null) {
+                machineToggleListener.onToggleMachine(item);
+            }
+        });
+        row.setContentDescription(GhostexAccessibilityCopy.join(
+            item.projectTitle + " machine section",
+            item.collapsed ? "Collapsed. Tap to expand." : "Expanded. Tap to collapse."));
         return row;
     }
 
@@ -467,11 +517,40 @@ public final class GhostexRemoteSessionAdapter extends ArrayAdapter<GhostexDrawe
             statusDot.setTextColor(statusColor);
             statusDot.setBackground(statusDotBackground(parent.getContext(), statusColor));
         }
+        /*
+        CDXC:AndroidSidebar 2026-07-18:
+        With every machine's section stacked in one drawer, the active
+        highlight must compare against the row's owning machine, not only the
+        selected machine, so an identical session id on another Mac's section
+        never lights up.
+        */
+        String rowMachineId = item != null && !item.machineId().isEmpty()
+            ? item.machineId()
+            : currentMachineId;
         row.setBackground(sessionBackground(parent.getContext(),
-            isActiveSession(currentMachineId, activeSessionKey, session)));
+            isActiveSession(rowMachineId, activeSessionKey, session)));
         row.setContentDescription(GhostexAccessibilityCopy.join(title.getText().toString(),
             statusDescription(session),
             "Tap to attach. Long press for actions."));
+        return row;
+    }
+
+    private TextView createMachineHeader(@NonNull ViewGroup parent) {
+        Context context = parent.getContext();
+        TextView row = new TextView(context);
+        row.setTag("machineHeader");
+        row.setTextColor(GhostexPalette.MUTED);
+        row.setTextSize(12);
+        row.setTypeface(Typeface.DEFAULT_BOLD);
+        row.setAllCaps(true);
+        row.setLetterSpacing(0.06f);
+        row.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+        row.setSingleLine(true);
+        row.setEllipsize(TextUtils.TruncateAt.END);
+        row.setPadding(dp(context, 8), dp(context, 18), dp(context, 8), dp(context, 4));
+        row.setMinHeight(dp(context, 36));
+        row.setClickable(true);
+        row.setFocusable(true);
         return row;
     }
 

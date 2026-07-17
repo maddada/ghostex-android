@@ -23,10 +23,12 @@ public final class GhostexSshCommandBuilder {
     the remote sidebar list changes; session ids keep warm attach and
     long-press actions bound to the tapped row.
 
-    CDXC:AndroidRemoteSessions 2026-05-17-12:41:
-    Invoke the Mac-hosted Ghostex CLI through `/bin/zsh -lc` so SSH commands see
-    the user's login-shell PATH, including Homebrew-installed `ghostex`. Keep
-    the wrapper centralized so nested quoting stays consistent for list, attach,
+    CDXC:AndroidRemoteSessions 2026-07-17:
+    Invoke the remote Ghostex CLI through the account's configured login shell
+    so SSH commands see the same user PATH on macOS and Linux. SSH provides
+    SHELL from the remote account; using it directly preserves zsh on macOS
+    without assuming that Linux machines also install `/bin/zsh`. Keep the
+    wrapper centralized so nested quoting stays consistent for list, attach,
     and context-menu actions.
 
     CDXC:AndroidRemoteSessions 2026-05-17-13:57:
@@ -221,6 +223,17 @@ public final class GhostexSshCommandBuilder {
         return join(remoteParts);
     }
 
+    public static String createChatSessionRemoteCommand() {
+        /*
+        CDXC:MobileQuickSessions 2026-07-18:
+        The Quick header's plus button mirrors the desktop Quick "+": gxserver
+        creates a fresh projectless chat workspace under ~/ghostex/chats and its
+        first terminal session in one `ghostex create-chat` call, so Android
+        never invents chat project ids or storage paths on the phone.
+        */
+        return "ghostex create-chat --json";
+    }
+
     public static String createAgentSessionRemoteCommand(@Nullable String agentId,
                                                          @Nullable String projectId) {
         /*
@@ -275,13 +288,21 @@ public final class GhostexSshCommandBuilder {
             " --direction " + shellQuote(cleanDirection);
     }
 
+    public static String restoreRecentProjectRemoteCommand(@Nullable String projectId) {
+        String cleanProjectId = projectId == null ? "" : projectId.trim();
+        if (cleanProjectId.isEmpty()) {
+            throw new IllegalArgumentException("Ghostex project id is required.");
+        }
+        return "ghostex restore-recent-project --project-id " + shellQuote(cleanProjectId) + " --json";
+    }
+
     public static String shellQuote(@Nullable String value) {
         if (value == null || value.isEmpty()) return "''";
         return "'" + value.replace("'", "'\"'\"'") + "'";
     }
 
     static String loginShellCommand(@NonNull String remoteCommand) {
-        return "/bin/zsh -lc " + shellQuote(remoteCommand);
+        return "\"$SHELL\" -lc " + shellQuote(remoteCommand);
     }
 
     static boolean isSupportedSessionAction(@Nullable String action) {

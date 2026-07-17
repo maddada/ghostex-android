@@ -101,6 +101,46 @@ public final class GhostexDrawerItemTest {
     }
 
     @Test
+    public void activeProjectRemainsAfterItsLastSessionCloses() throws Exception {
+        GhostexWorkspaceInventory workspace = GhostexWorkspaceInventory.fromJson(
+            new JSONObject("{\"projects\":[{\"projectId\":\"project-a\",\"name\":\"App\",\"path\":\"/repo/app\",\"isChat\":false}]}"),
+            java.util.Collections.emptyList());
+
+        List<GhostexDrawerItem> items = GhostexDrawerItem.buildItems(
+            java.util.Collections.emptyList(), workspace, java.util.Collections.emptySet(),
+            java.util.Collections.emptySet(), java.util.Collections.emptySet());
+
+        Assert.assertEquals(2, items.size());
+        Assert.assertEquals(GhostexDrawerItem.Type.PROJECT_HEADER, items.get(0).type);
+        Assert.assertEquals("App", items.get(0).projectTitle);
+        Assert.assertEquals(0, items.get(0).sessionCount);
+        Assert.assertEquals(GhostexDrawerItem.Type.PROJECT_EMPTY, items.get(1).type);
+    }
+
+    @Test
+    public void chatProjectsRenderAsOneChatsCollection() throws Exception {
+        ArrayList<GhostexRemoteSession> sessions = new ArrayList<>();
+        sessions.add(session("chat-a", "chat-project-a", "Chat A", "working", false));
+        sessions.add(session("chat-b", "chat-project-b", "Chat B", "idle", false));
+        GhostexWorkspaceInventory workspace = GhostexWorkspaceInventory.fromJson(
+            new JSONObject("{\"projects\":[" +
+                "{\"projectId\":\"chat-project-a\",\"name\":\"Chat A\",\"isChat\":true}," +
+                "{\"projectId\":\"chat-project-b\",\"name\":\"Chat B\",\"isChat\":true}]}"),
+            sessions);
+
+        List<GhostexDrawerItem> items = GhostexDrawerItem.buildItems(
+            sessions, workspace, java.util.Collections.emptySet(),
+            java.util.Collections.emptySet(), java.util.Collections.emptySet());
+
+        Assert.assertEquals(3, items.size());
+        Assert.assertEquals("Chats", items.get(0).projectTitle);
+        Assert.assertTrue(items.get(0).isChatCollection);
+        Assert.assertEquals(2, items.get(0).sessionCount);
+        Assert.assertEquals("session-chat-a", items.get(1).session.sessionId);
+        Assert.assertEquals("session-chat-b", items.get(2).session.sessionId);
+    }
+
+    @Test
     public void buildItemsSortsSessionsInsideProjectLikeMacSidebar() {
         ArrayList<GhostexRemoteSession> sessions = new ArrayList<>();
         sessions.add(session("idle-new", "project-a", "Ghostex", "idle", false, "2026-05-17T08:59:00Z"));

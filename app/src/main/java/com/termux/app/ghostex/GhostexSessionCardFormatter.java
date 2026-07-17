@@ -65,14 +65,41 @@ public final class GhostexSessionCardFormatter {
         return value.isEmpty() ? "Unknown" : value;
     }
 
+    /*
+    CDXC:AndroidSidebar 2026-07-18:
+    Session order must match the desktop shared/active-sessions-sort algorithm:
+    browser sessions before terminals, pinned sessions first inside each kind
+    in their saved order, then unpinned rows by activity priority
+    (attention > working > idle), then most recent interaction, then the
+    payload's original order. Collections.sort is stable, so returning 0 keeps
+    the CLI order for ties, and preserveSessionOrder payloads skip this
+    comparator entirely.
+    */
     public static int compareForSidebarOrder(@NonNull GhostexRemoteSession left,
                                              @NonNull GhostexRemoteSession right) {
+        int kindDelta = sessionKindRank(left) - sessionKindRank(right);
+        if (kindDelta != 0) return kindDelta;
+        int pinnedDelta = pinnedRank(left) - pinnedRank(right);
+        if (pinnedDelta != 0) return pinnedDelta;
+        if (left.isPinned && right.isPinned) return 0;
         int priorityDelta = activityPriority(right) - activityPriority(left);
         if (priorityDelta != 0) return priorityDelta;
         long timeDelta = parseIsoTimestamp(right.lastInteractionAt) - parseIsoTimestamp(left.lastInteractionAt);
         if (timeDelta > 0L) return 1;
         if (timeDelta < 0L) return -1;
         return 0;
+    }
+
+    private static int sessionKindRank(@NonNull GhostexRemoteSession session) {
+        return isBrowserSession(session) ? 0 : 1;
+    }
+
+    private static boolean isBrowserSession(@NonNull GhostexRemoteSession session) {
+        return "browser".equals(session.kind) || "browser".equals(session.surface);
+    }
+
+    private static int pinnedRank(@NonNull GhostexRemoteSession session) {
+        return session.isPinned ? 0 : 1;
     }
 
     private static int activityPriority(@NonNull GhostexRemoteSession session) {

@@ -89,7 +89,20 @@ public final class GhostexAndroidController {
     private final ArrayList<GhostexDrawerItem> drawerItems = new ArrayList<>();
     private final HashSet<String> collapsedProjectKeys = new HashSet<>();
     private final HashSet<String> collapsedProjectSessionListKeys = new HashSet<>();
-    private final HashSet<String> collapsedGroupKeys = new HashSet<>();
+    /*
+    CDXC:AndroidSidebar 2026-07-18:
+    The drawer stacks a section per saved machine, mirroring the desktop's
+    per-remote-machine sidebar sections. Non-selected machines are fetched
+    concurrently on their own SSH transports and cached here per machine id;
+    machine headers collapse in-memory and named-group collapse state is
+    machine-scoped so identical project/group keys on two Macs cannot collide.
+    */
+    private final LinkedHashMap<String, GhostexMachineInventorySnapshot> machineInventories = new LinkedHashMap<>();
+    private final HashSet<String> machineInventoryFetchesInFlight = new HashSet<>();
+    private final HashSet<String> collapsedMachineIds = new HashSet<>();
+    private final HashMap<String, HashSet<String>> collapsedGroupKeysByMachineId = new HashMap<>();
+    private final ExecutorService machineInventoryExecutor = Executors.newCachedThreadPool();
+    private long machineInventoryGeneration;
     private final HashSet<String> submittedFirstPromptTitleCommandEnterKeys = new HashSet<>();
     private final LinkedHashMap<String, TerminalSession> warmSessions =
         new LinkedHashMap<>(WARM_SESSION_LIMIT + 1, 0.75f, true);
@@ -103,6 +116,7 @@ public final class GhostexAndroidController {
     private View sessionsPage;
     private View machinesPage;
     private View settingsPage;
+    private View recentProjectsButton;
     private LinearLayout machinesPageList;
     private LinearLayout settingsPageList;
     private DrawerLayout.DrawerListener drawerSessionPollListener;
@@ -456,6 +470,7 @@ public final class GhostexAndroidController {
         remoteActionGeneration++;
         attachGeneration++;
         sessionStatusPollGeneration++;
+        machineInventoryGeneration++;
         sessionPasswords.clear();
         stopSessionStatusPolling();
         releaseDoneNotificationSoundPool();
@@ -466,6 +481,7 @@ public final class GhostexAndroidController {
         mainHandler.removeCallbacksAndMessages(null);
         dismissRemoteSessionCreatingIndicator();
         executor.shutdownNow();
+        machineInventoryExecutor.shutdownNow();
     }
 
     public void notifyTermuxSessionsUpdated() {
@@ -596,23 +612,33 @@ public final class GhostexAndroidController {
         sessionsPage = activity.findViewById(R.id.ghostex_sessions_page);
         machinesPage = activity.findViewById(R.id.ghostex_machines_page);
         settingsPage = activity.findViewById(R.id.ghostex_settings_page);
+        recentProjectsButton = activity.findViewById(R.id.ghostex_recent_projects_button);
         machinesPageList = activity.findViewById(R.id.ghostex_machines_page_list);
         settingsPageList = activity.findViewById(R.id.ghostex_settings_page_list);
         applyFloatingTerminalControlSettings();
         GhostexEdgeToEdgeInsets.applyToReleaseSurface(activity.findViewById(R.id.drawer_layout));
         sessionsList = activity.findViewById(R.id.terminal_sessions_list);
         sessionAdapter = new GhostexRemoteSessionAdapter(activity, drawerItems);
+        /*
+        CDXC:AndroidSidebar 2026-07-18:
+        Drawer rows carry their owning machine id now that all machines render
+        as stacked sections. Interacting with another machine's row selects that
+        machine first, so the existing selected-machine guards, warm-session
+        keys, and credential flows keep protecting against cross-machine
+        actions.
+        */
         sessionAdapter.setOnProjectSessionCreateListener(item ->
-            createRemoteSessionForProject(item, machineStore.getLastMachine()));
+            createRemoteSessionForProject(item, selectMachineForItem(item)));
         sessionAdapter.setOnProjectActionsListener(item ->
-            showProjectContextMenu(item, machineStore.getLastMachine()));
+            showProjectContextMenu(item, selectMachineForItem(item)));
         sessionAdapter.setOnProjectToggleListener(this::toggleProjectCollapsed);
         sessionAdapter.setOnProjectSessionListToggleListener(this::toggleProjectSessionListCollapsed);
         sessionAdapter.setOnGroupToggleListener(this::toggleGroupCollapsed);
+        sessionAdapter.setOnMachineToggleListener(this::toggleMachineCollapsed);
         sessionAdapter.setOnAgentLaunchListener((item, agent) ->
-            createRemoteAgentSessionForProject(item, agent, machineStore.getLastMachine()));
+            createRemoteAgentSessionForProject(item, agent, selectMachineForItem(item)));
         sessionAdapter.setOnQuickActionListener((item, action) ->
-            runProjectQuickAction(item, action, machineStore.getLastMachine()));
+            runProjectQuickAction(item, action, selectMachineForItem(item)));
         sessionsList.setAdapter(sessionAdapter);
         sessionsList.setOnScrollListener(new AbsListView.OnScrollListener() {
             @Override
@@ -628,7 +654,7 @@ public final class GhostexAndroidController {
         sessionsList.setOnItemClickListener((parent, view, position, id) -> {
             GhostexDrawerItem item = sessionAdapter.getItem(position);
             if (item != null && item.type == GhostexDrawerItem.Type.SESSION && item.session != null) {
-                attachRemoteSession(item.session);
+                attachRemoteSession(selectMachineForItem(item), item.session);
             } else if (item != null && item.type == GhostexDrawerItem.Type.STATE_CARD) {
                 showRecoveryActions(item);
             }
@@ -636,7 +662,7 @@ public final class GhostexAndroidController {
         sessionsList.setOnItemLongClickListener((parent, view, position, id) -> {
             GhostexDrawerItem item = sessionAdapter.getItem(position);
             if (item != null && item.session != null) {
-                showSessionContextMenu(item.session, machineStore.getLastMachine());
+                showSessionContextMenu(item.session, selectMachineForItem(item));
                 return true;
             } else if (item != null && item.type == GhostexDrawerItem.Type.STATE_CARD) {
                 showRecoveryActions(item);
@@ -661,6 +687,9 @@ public final class GhostexAndroidController {
             Refresh sessions action sheet path in production builds.
             */
             refreshSessionsButton.setOnClickListener(v -> reconnectLastMachine(false));
+        }
+        if (recentProjectsButton != null) {
+            recentProjectsButton.setOnClickListener(v -> showRecentProjectsModal());
         }
 
         /*
@@ -1141,6 +1170,7 @@ public final class GhostexAndroidController {
         Set<String> machineIds = machineIds(machines);
         passwordVault.prunePasswordsForMachineIds(machineIds);
         pruneSessionPasswordsForMachineIds(machineIds);
+        retainMachineInventories(machines);
         rebuildMachinesPage();
         if (machines.isEmpty()) {
             setStatus("Add a machine to connect to Ghostex over Tailscale.");
@@ -1199,7 +1229,10 @@ public final class GhostexAndroidController {
             stopSessionStatusPolling();
             collapsedProjectKeys.clear();
             collapsedProjectSessionListKeys.clear();
-            collapsedGroupKeys.clear();
+            collapsedGroupKeysByMachineId.clear();
+            machineInventories.clear();
+            collapsedMachineIds.clear();
+            machineInventoryGeneration++;
             workspaceInventory = null;
             sessionAdapter.setCurrentMachineId(null);
             if (!fromStartup) showMachineEditor(null);
@@ -1377,22 +1410,26 @@ public final class GhostexAndroidController {
         remoteSessions.clear();
         remoteSessions.addAll(sessions);
         workspaceInventory = workspace;
+        updateRecentProjectsButton();
         publishNotificationSessions();
         if (shouldPlayStatusSound) playDoneNotificationSound();
         consumePendingNotificationSession();
         sessionAdapter.setCurrentMachineId(machine.id);
         /*
-        CDXC:AndroidSidebar 2026-07-12-10:05:
-        The mobile summary now lists every active project even when it has no
-        sessions, so a session-less inventory with projects should render the
-        project headers (with create/agent affordances) instead of the legacy
-        no-sessions recovery card.
+        CDXC:AndroidSidebar 2026-07-18:
+        Active projects are explicit gxserver inventory and remain in the
+        sidebar after their last session closes. Chat storage projects are
+        combined by the drawer projection, while parked recent projects stay
+        behind the dedicated restore modal.
         */
-        boolean hasActiveProjects = workspace != null && !workspace.projects.isEmpty();
-        if (sessions.isEmpty() && !hasActiveProjects) {
+        machineInventories.put(machine.id,
+            GhostexMachineInventorySnapshot.success(machine, sessions, workspace));
+        refreshOtherMachineInventories(machine.id);
+        if (machineStore.getMachines().size() < 2 &&
+            sessions.isEmpty() && (workspace == null || workspace.projects.isEmpty())) {
             setDrawerState("No ZMX sessions yet",
                 "The machine is reachable, but the Ghostex CLI did not return any ZMX-backed sessions.",
-                "Start or resume sessions in Ghostex on the Mac, then tap Retry.");
+                "Start or resume sessions in Ghostex on the remote machine, then tap Retry.");
         } else {
             rebuildDrawerItems();
         }
@@ -1401,7 +1438,7 @@ public final class GhostexAndroidController {
             currentMatchingMachine(machine), System.currentTimeMillis());
         if (connectedMachine != null) machineStore.saveMachine(connectedMachine);
         setStatus(successStatusOverride != null ? successStatusOverride : sessions.isEmpty()
-            ? "Connected. No ZMX-backed Ghostex sessions are running."
+            ? "Connected. Active projects have no ZMX-backed sessions."
             : "Connected to " + machine.displayLabel());
         submitStagedFirstPromptTitleCommands(machine, sessions);
     }
@@ -1557,6 +1594,7 @@ public final class GhostexAndroidController {
     private boolean hasVisibleSessionList() {
         for (GhostexDrawerItem item : drawerItems) {
             if (item.type == GhostexDrawerItem.Type.PROJECT_HEADER ||
+                item.type == GhostexDrawerItem.Type.MACHINE_HEADER ||
                 item.type == GhostexDrawerItem.Type.SESSION) {
                 return true;
             }
@@ -1960,11 +1998,239 @@ public final class GhostexAndroidController {
         }
     }
 
+    /*
+    CDXC:AndroidSidebar 2026-07-18:
+    All saved machines render as stacked sections at once, mirroring the
+    desktop's per-remote-machine sidebar sections. With a single saved machine
+    the drawer keeps its original headerless layout; with two or more, each
+    machine gets a collapsible header followed by that machine's Quick,
+    projects, and sessions. Non-selected machines render from their cached
+    concurrent fetch, with a per-section state card while loading or after a
+    fetch failure.
+    */
     private void rebuildDrawerItems() {
         drawerItems.clear();
-        drawerItems.addAll(GhostexDrawerItem.buildItems(remoteSessions, workspaceInventory,
-            collapsedProjectKeys, collapsedProjectSessionListKeys, collapsedGroupKeys));
+        List<GhostexMachine> machines = machineStore.getMachines();
+        String selectedMachineId = machineStore.getLastMachineId();
+        if (machines.size() < 2) {
+            drawerItems.addAll(GhostexDrawerItem.stampMachineId(
+                GhostexDrawerItem.buildItems(remoteSessions, workspaceInventory,
+                    collapsedProjectKeys, collapsedProjectSessionListKeys,
+                    collapsedGroupKeysForMachine(selectedMachineId == null ? "" : selectedMachineId)),
+                selectedMachineId == null ? "" : selectedMachineId));
+            pruneCollapsedProjectKeys();
+            return;
+        }
+        for (GhostexMachine machine : machines) {
+            boolean machineCollapsed = collapsedMachineIds.contains(machine.id);
+            drawerItems.add(GhostexDrawerItem.machineHeader(machine.id, machine.displayLabel(),
+                machineCollapsed));
+            if (machineCollapsed) continue;
+            boolean isSelected = machine.id.equals(selectedMachineId);
+            List<GhostexRemoteSession> machineSessions;
+            GhostexWorkspaceInventory machineWorkspace;
+            if (isSelected) {
+                machineSessions = remoteSessions;
+                machineWorkspace = workspaceInventory;
+            } else {
+                GhostexMachineInventorySnapshot snapshot = machineInventories.get(machine.id);
+                if (snapshot == null) {
+                    drawerItems.add(stampedMachineStateCard(machine.id, "Loading sessions",
+                        "Fetching this machine's Ghostex sessions over SSH.", ""));
+                    continue;
+                }
+                if (!snapshot.isSuccess()) {
+                    drawerItems.add(stampedMachineStateCard(machine.id, "Connection needs attention",
+                        snapshot.errorMessage == null ? "Could not load sessions from this machine."
+                            : snapshot.errorMessage,
+                        "Tap for recovery actions."));
+                    continue;
+                }
+                machineSessions = snapshot.sessions;
+                machineWorkspace = snapshot.workspace;
+            }
+            Set<String> projectKeys = isSelected
+                ? collapsedProjectKeys : machineStore.getCollapsedProjectKeys(machine.id);
+            Set<String> sessionListKeys = isSelected
+                ? collapsedProjectSessionListKeys
+                : machineStore.getCollapsedProjectSessionListKeys(machine.id);
+            Set<String> groupKeys = collapsedGroupKeysForMachine(machine.id);
+            List<GhostexDrawerItem> machineItems = GhostexDrawerItem.stampMachineId(
+                GhostexDrawerItem.buildItems(machineSessions, machineWorkspace,
+                    projectKeys, sessionListKeys, groupKeys),
+                machine.id);
+            if (machineItems.isEmpty()) {
+                drawerItems.add(stampedMachineStateCard(machine.id, "No ZMX sessions yet",
+                    "This machine is reachable, but the Ghostex CLI did not return any ZMX-backed sessions.",
+                    ""));
+                continue;
+            }
+            drawerItems.addAll(machineItems);
+        }
         pruneCollapsedProjectKeys();
+    }
+
+    @NonNull
+    private GhostexDrawerItem stampedMachineStateCard(@NonNull String machineId,
+                                                      @NonNull String title,
+                                                      @NonNull String body,
+                                                      @NonNull String actionHint) {
+        GhostexDrawerItem item = GhostexDrawerItem.stateCard(title, body, actionHint);
+        ArrayList<GhostexDrawerItem> items = new ArrayList<>();
+        items.add(item);
+        return GhostexDrawerItem.stampMachineId(items, machineId).get(0);
+    }
+
+    @NonNull
+    private HashSet<String> collapsedGroupKeysForMachine(@NonNull String machineId) {
+        HashSet<String> keys = collapsedGroupKeysByMachineId.get(machineId);
+        if (keys == null) {
+            keys = new HashSet<>();
+            collapsedGroupKeysByMachineId.put(machineId, keys);
+        }
+        return keys;
+    }
+
+    private void refreshOtherMachineInventories(@NonNull String fetchedMachineId) {
+        /*
+        CDXC:AndroidSidebar 2026-07-18:
+        Every selected-machine inventory refresh (reconnect, poll, post-create)
+        also refreshes the other saved machines concurrently, each on its own
+        SSH transport, so all stacked sections stay on the same cadence without
+        serializing SSH round trips behind the selected machine's fetch.
+        */
+        List<GhostexMachine> machines = machineStore.getMachines();
+        retainMachineInventories(machines);
+        if (machines.size() < 2) return;
+        for (GhostexMachine machine : machines) {
+            if (machine.id.equals(fetchedMachineId)) continue;
+            fetchMachineInventoryInBackground(machine);
+        }
+    }
+
+    private void retainMachineInventories(@NonNull List<GhostexMachine> machines) {
+        Set<String> machineIds = machineIds(machines);
+        machineInventories.keySet().retainAll(machineIds);
+        collapsedMachineIds.retainAll(machineIds);
+        collapsedGroupKeysByMachineId.keySet().retainAll(machineIds);
+    }
+
+    private void fetchMachineInventoryInBackground(@NonNull GhostexMachine machine) {
+        if (!machineInventoryFetchesInFlight.add(machine.id)) return;
+        long requestGeneration = machineInventoryGeneration;
+        GhostexSessionInventoryClient machineClient = new GhostexSessionInventoryClient(activity);
+        machineInventoryExecutor.execute(() -> {
+            String password = readPassword(machine);
+            GhostexSessionInventoryClient.Result result = machineClient.fetchSessions(machine, password);
+            mainHandler.post(() -> {
+                machineInventoryFetchesInFlight.remove(machine.id);
+                if (destroyed || requestGeneration != machineInventoryGeneration) return;
+                if (!machineStore.hasMachine(machine.id)) {
+                    machineInventories.remove(machine.id);
+                    return;
+                }
+                machineInventories.put(machine.id, result.ok
+                    ? GhostexMachineInventorySnapshot.success(machine, result.sessions, result.workspace)
+                    : GhostexMachineInventorySnapshot.failure(machine, result.errorMessage));
+                if (machine.id.equals(machineStore.getLastMachineId())) return;
+                if (!hasVisibleSessionList()) return;
+                GhostexDrawerScrollAnchor scrollAnchor = captureDrawerScrollAnchor();
+                rebuildDrawerItems();
+                notifyDrawerAdapterPreservingScroll(scrollAnchor);
+            });
+        });
+    }
+
+    @Nullable
+    private GhostexMachine machineForItem(@NonNull GhostexDrawerItem item) {
+        String machineId = item.machineId();
+        if (machineId.isEmpty()) return machineStore.getLastMachine();
+        for (GhostexMachine machine : machineStore.getMachines()) {
+            if (machine.id.equals(machineId)) return machine;
+        }
+        return machineStore.getLastMachine();
+    }
+
+    @Nullable
+    private GhostexMachine selectMachineForItem(@NonNull GhostexDrawerItem item) {
+        /*
+        CDXC:AndroidSidebar 2026-07-18:
+        Interacting with a row in another machine's stacked section makes that
+        machine the selected one before the action runs. This keeps the
+        existing selected-machine action guards, warm-session scoping,
+        credential prompts, and polling exactly as they were, while letting all
+        sections stay tappable at once.
+        */
+        GhostexMachine machine = machineForItem(item);
+        if (machine == null) return null;
+        if (!machine.id.equals(machineStore.getLastMachineId())) {
+            selectMachineInventory(machine);
+        }
+        return machine;
+    }
+
+    private void selectMachineInventory(@NonNull GhostexMachine machine) {
+        machineStore.setLastMachineId(machine.id);
+        loadDrawerDisclosureState(machine);
+        remoteSessions.clear();
+        GhostexMachineInventorySnapshot snapshot = machineInventories.get(machine.id);
+        if (snapshot != null && snapshot.isSuccess()) {
+            remoteSessions.addAll(snapshot.sessions);
+            workspaceInventory = snapshot.workspace;
+        } else {
+            workspaceInventory = null;
+        }
+        sessionAdapter.setCurrentMachineId(machine.id);
+        updateRecentProjectsButton();
+        publishNotificationSessions();
+    }
+
+    private void updateRecentProjectsButton() {
+        if (recentProjectsButton == null) return;
+        boolean hasRecentProjects = workspaceInventory != null &&
+            !workspaceInventory.recentProjects.isEmpty();
+        recentProjectsButton.setVisibility(hasRecentProjects ? View.VISIBLE : View.GONE);
+    }
+
+    private void showRecentProjectsModal() {
+        GhostexMachine machine = machineStore.getLastMachine();
+        if (!canRunRemoteSidebarAction(machine, "restoring a recent project")) return;
+        if (workspaceInventory == null || workspaceInventory.recentProjects.isEmpty()) {
+            setStatus("There are no recent projects to restore.");
+            return;
+        }
+        ArrayList<GhostexWorkspaceInventory.RecentProject> recentProjects =
+            new ArrayList<>(workspaceInventory.recentProjects);
+        ArrayList<GhostexAction> actions = new ArrayList<>();
+        for (GhostexWorkspaceInventory.RecentProject project : recentProjects) {
+            String sessionLabel = project.sessionCount == 1 ? "1 session" : project.sessionCount + " sessions";
+            actions.add(new GhostexAction(project.displayTitle(), project.path + " · " + sessionLabel,
+                false, () -> restoreRecentProject(machine, project)));
+        }
+        showActionSheet("Recent Projects", "Choose a parked project to restore to the active sidebar.", actions);
+    }
+
+    private void restoreRecentProject(@NonNull GhostexMachine machine,
+                                      @NonNull GhostexWorkspaceInventory.RecentProject project) {
+        if (!canRunRemoteSidebarAction(machine, "restoring this recent project")) return;
+        long requestGeneration = ++remoteActionGeneration;
+        setStatus("Restoring " + project.displayTitle() + "...");
+        executor.execute(() -> {
+            String password = readPassword(machine);
+            GhostexSessionInventoryClient.Result result =
+                inventoryClient.restoreRecentProject(machine, password, project.projectId);
+            mainHandler.post(() -> {
+                if (!isCurrentRemoteAction(requestGeneration, machine)) return;
+                if (!result.ok) {
+                    String message = result.errorMessage == null
+                        ? "Could not restore this project." : result.errorMessage;
+                    setStatus(message);
+                    activity.showToast(message, true);
+                    return;
+                }
+                refreshSessionInventory("Restored " + project.displayTitle() + ".");
+            });
+        });
     }
 
     private void toggleGroupCollapsed(@NonNull GhostexDrawerItem groupItem) {
@@ -1976,22 +2242,65 @@ public final class GhostexAndroidController {
         keys per machine yet.
         */
         if (groupItem.type != GhostexDrawerItem.Type.GROUP_HEADER) return;
-        if (collapsedGroupKeys.contains(groupItem.groupCollapseKey)) {
-            collapsedGroupKeys.remove(groupItem.groupCollapseKey);
-        } else {
-            collapsedGroupKeys.add(groupItem.groupCollapseKey);
+        HashSet<String> groupKeys = collapsedGroupKeysForMachine(itemMachineIdOrSelected(groupItem));
+        if (!groupKeys.remove(groupItem.groupCollapseKey)) {
+            groupKeys.add(groupItem.groupCollapseKey);
         }
         GhostexDrawerScrollAnchor scrollAnchor = captureDrawerScrollAnchor();
         rebuildDrawerItems();
         notifyDrawerAdapterPreservingScroll(scrollAnchor);
     }
 
+    private void toggleMachineCollapsed(@NonNull GhostexDrawerItem machineItem) {
+        /*
+        CDXC:AndroidSidebar 2026-07-18:
+        Machine section disclosure mirrors project disclosure but stays
+        in-memory for the app session: the saved-machine list is small and a
+        fresh start should always show every machine's sections expanded.
+        */
+        if (machineItem.type != GhostexDrawerItem.Type.MACHINE_HEADER) return;
+        String machineId = machineItem.machineId();
+        if (machineId.isEmpty()) return;
+        if (!collapsedMachineIds.remove(machineId)) {
+            collapsedMachineIds.add(machineId);
+        }
+        GhostexDrawerScrollAnchor scrollAnchor = captureDrawerScrollAnchor();
+        rebuildDrawerItems();
+        notifyDrawerAdapterPreservingScroll(scrollAnchor);
+    }
+
+    @NonNull
+    private String itemMachineIdOrSelected(@NonNull GhostexDrawerItem item) {
+        if (!item.machineId().isEmpty()) return item.machineId();
+        String selectedMachineId = machineStore.getLastMachineId();
+        return selectedMachineId == null ? "" : selectedMachineId;
+    }
+
+    private boolean isSelectedMachineItem(@NonNull GhostexDrawerItem item) {
+        String machineId = item.machineId();
+        return machineId.isEmpty() || machineId.equals(machineStore.getLastMachineId());
+    }
+
     private void toggleProjectCollapsed(@NonNull GhostexDrawerItem projectItem) {
         if (projectItem.type != GhostexDrawerItem.Type.PROJECT_HEADER) return;
-        if (collapsedProjectKeys.contains(projectItem.projectKey)) {
-            collapsedProjectKeys.remove(projectItem.projectKey);
+        if (isSelectedMachineItem(projectItem)) {
+            if (!collapsedProjectKeys.remove(projectItem.projectKey)) {
+                collapsedProjectKeys.add(projectItem.projectKey);
+            }
         } else {
-            collapsedProjectKeys.add(projectItem.projectKey);
+            /*
+            CDXC:AndroidSidebar 2026-07-18:
+            Non-selected machine sections keep their persisted per-machine
+            disclosure state in the machine store, so toggling them writes
+            straight through without touching the selected machine's in-memory
+            sets.
+            */
+            String machineId = projectItem.machineId();
+            HashSet<String> projectKeys = machineStore.getCollapsedProjectKeys(machineId);
+            if (!projectKeys.remove(projectItem.projectKey)) {
+                projectKeys.add(projectItem.projectKey);
+            }
+            machineStore.setCollapsedProjectKeys(machineId, projectKeys);
         }
         GhostexDrawerScrollAnchor scrollAnchor = captureDrawerScrollAnchor();
         rebuildDrawerItems();
@@ -2001,10 +2310,17 @@ public final class GhostexAndroidController {
 
     private void toggleProjectSessionListCollapsed(@NonNull GhostexDrawerItem projectItem) {
         if (projectItem.type != GhostexDrawerItem.Type.PROJECT_SESSION_LIST_TOGGLE) return;
-        if (collapsedProjectSessionListKeys.contains(projectItem.projectKey)) {
-            collapsedProjectSessionListKeys.remove(projectItem.projectKey);
+        if (isSelectedMachineItem(projectItem)) {
+            if (!collapsedProjectSessionListKeys.remove(projectItem.projectKey)) {
+                collapsedProjectSessionListKeys.add(projectItem.projectKey);
+            }
         } else {
-            collapsedProjectSessionListKeys.add(projectItem.projectKey);
+            String machineId = projectItem.machineId();
+            HashSet<String> sessionListKeys = machineStore.getCollapsedProjectSessionListKeys(machineId);
+            if (!sessionListKeys.remove(projectItem.projectKey)) {
+                sessionListKeys.add(projectItem.projectKey);
+            }
+            machineStore.setCollapsedProjectSessionListKeys(machineId, sessionListKeys);
         }
         GhostexDrawerScrollAnchor scrollAnchor = captureDrawerScrollAnchor();
         rebuildDrawerItems();
@@ -2013,9 +2329,22 @@ public final class GhostexAndroidController {
     }
 
     private void pruneCollapsedProjectKeys() {
+        /*
+        CDXC:AndroidSidebar 2026-07-18:
+        Only prune against the selected machine's own headers. Another
+        machine's stacked section can expose the same project key (for example
+        "chats"), and a collapsed non-selected machine renders no headers at
+        all, so pruning against the combined list would corrupt persisted
+        per-machine disclosure state.
+        */
+        String selectedMachineId = machineStore.getLastMachineId();
+        if (selectedMachineId != null && collapsedMachineIds.contains(selectedMachineId)) return;
         HashSet<String> liveProjectKeys = new HashSet<>();
         for (GhostexDrawerItem item : drawerItems) {
-            if (item.type == GhostexDrawerItem.Type.PROJECT_HEADER) liveProjectKeys.add(item.projectKey);
+            if (item.type == GhostexDrawerItem.Type.PROJECT_HEADER &&
+                isSelectedMachineItem(item)) {
+                liveProjectKeys.add(item.projectKey);
+            }
         }
         boolean projectKeysChanged = collapsedProjectKeys.retainAll(liveProjectKeys);
         boolean sessionListKeysChanged = collapsedProjectSessionListKeys.retainAll(liveProjectKeys);
@@ -2044,6 +2373,9 @@ public final class GhostexAndroidController {
 
     private void setDrawerState(@NonNull String title, @NonNull String body, @NonNull String actionHint) {
         if (destroyed) return;
+        if (recentProjectsButton != null && workspaceInventory == null) {
+            recentProjectsButton.setVisibility(View.GONE);
+        }
         drawerItems.clear();
         drawerItems.add(GhostexDrawerItem.stateCard(title, body, actionHint));
         sessionAdapter.notifyDataSetChanged();
@@ -2172,7 +2504,9 @@ public final class GhostexAndroidController {
     private ArrayList<GhostexDrawerItem> currentProjectHeaders() {
         ArrayList<GhostexDrawerItem> projectHeaders = new ArrayList<>();
         for (GhostexDrawerItem item : drawerItems) {
-            if (item.type == GhostexDrawerItem.Type.PROJECT_HEADER) projectHeaders.add(item);
+            if (item.type == GhostexDrawerItem.Type.PROJECT_HEADER && !item.isChatCollection) {
+                projectHeaders.add(item);
+            }
         }
         return projectHeaders;
     }
@@ -2313,6 +2647,21 @@ public final class GhostexAndroidController {
                                                @Nullable GhostexMachine machine) {
         if (machine == null) return;
         if (!canRunRemoteSidebarAction(machine, "creating a session")) return;
+        if (projectItem.isChatCollection) {
+            /*
+            CDXC:MobileQuickSessions 2026-07-18:
+            The Quick header's plus mirrors the desktop Quick "+": gxserver
+            creates a new projectless chat workspace plus its first terminal in
+            one `ghostex create-chat` call, then Android refreshes and attaches
+            the created session id through the same instant-feedback pipeline
+            as project creation.
+            */
+            launchRemoteProjectSession(machine, projectItem,
+                "Creating a Quick session…",
+                password -> inventoryClient.createChatSession(machine, password),
+                () -> createRemoteSessionForProject(projectItem, machine));
+            return;
+        }
         launchRemoteProjectSession(machine, projectItem,
             "Creating a terminal in " + projectItem.projectTitle + "…",
             password -> inventoryClient.createSession(machine, password, projectItem),

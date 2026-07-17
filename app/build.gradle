@@ -1351,7 +1351,7 @@ task verifyGhostexReleaseDrawerSurface() {
             violations.add("missing ic_ghostex_more_vertical.xml")
         }
         if (!controllerText.contains("setOnProjectActionsListener") ||
-            !controllerText.contains("showProjectContextMenu(item, machineStore.getLastMachine())")) {
+            !controllerText.contains("showProjectContextMenu(item, selectMachineForItem(item))")) {
             violations.add(controllerFile.name + ": project overflow button must open the existing project action sheet")
         }
         if (!controllerText.contains("launchRemoteProjectSession") ||

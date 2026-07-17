@@ -333,8 +333,8 @@ public final class TermuxPropertyConstants {
     CDXC:AndroidSettings 2026-06-23-08:40:
     Android's default toolbar should expose Shift in the old Ctrl-U slot so mobile matches the iOS accessory default and users get a modifier key instead of a line-clear macro by default.
     */
-    public static final String LEGACY_GHOSTEX_CTRL_U_EXTRA_KEYS = "[['ESC',{macro: 'CTRL u', display: '^u', popup: {macro: 'CTRL k', display: '^k'}},{macro: 'CTRL j', display: 'RTRN'},'HOME','UP','END','PGUP'], ['TAB','CTRL','ALT','LEFT','DOWN','RIGHT','PGDN']]";
-    public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[['ESC','SHIFT',{macro: 'CTRL j', display: 'RTRN'},'HOME','UP','END','PGUP'], ['TAB','CTRL','ALT','LEFT','DOWN','RIGHT','PGDN']]"; // Ghostex remote-agent double row
+    public static final String LEGACY_GHOSTEX_CTRL_U_EXTRA_KEYS = "[['ESC',{macro: 'CTRL u', display: '^u', popup: {macro: 'CTRL k', display: '^k'}},{macro: 'CTRL j', display: 'NEWLN'},'HOME','UP','END','PGUP'], ['TAB','CTRL','ALT','LEFT','DOWN','RIGHT','PGDN']]";
+    public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[['ESC','SHIFT',{macro: 'CTRL j', display: 'NEWLN'},'HOME','UP','END','PGUP'], ['TAB','CTRL','ALT','LEFT','DOWN','RIGHT','PGDN']]"; // Ghostex remote-agent double row
 
     /** Defines the key for extra keys style */
     public static final String KEY_EXTRA_KEYS_STYLE =  "extra-keys-style"; // Default: "extra-keys-style"

@@ -263,6 +263,31 @@ public final class GhostexSessionInventoryClient {
         }
     }
 
+    public Result createChatSession(@NonNull GhostexMachine machine, @Nullable String password) {
+        /*
+        CDXC:MobileQuickSessions 2026-07-18:
+        Quick sessions are projectless chat workspaces owned by gxserver.
+        `ghostex create-chat --json` creates the chat project plus its first
+        terminal session and returns the same created-session JSON shape as
+        create-session, so the existing refresh-and-attach pipeline works
+        unchanged.
+        */
+        try {
+            GhostexSshTransport.CommandResult commandResult = runRemoteGhostexCommand(machine, password,
+                GhostexSshCommandBuilder.createChatSessionRemoteCommand(),
+                "zmx=none op=createChatSession");
+            if (commandResult.timedOut) {
+                return Result.failure(GhostexRemoteTimeoutCopy.sessionAction("create a Quick session"));
+            }
+            if (commandResult.exitCode != 0) {
+                return Result.failure(summarizeFailure(commandResult.output, hasPassword(password)));
+            }
+            return Result.createSuccess(parseCreatedSessionId(commandResult.output));
+        } catch (Exception error) {
+            return Result.failure(error.getMessage() == null ? "Could not create a Quick session." : error.getMessage());
+        }
+    }
+
     public Result createAgentSession(@NonNull GhostexMachine machine, @Nullable String password,
                                      @NonNull String projectId, @NonNull String agentId) {
         /*
@@ -330,6 +355,24 @@ public final class GhostexSessionInventoryClient {
             return Result.success(new ArrayList<>());
         } catch (Exception error) {
             return Result.failure(error.getMessage() == null ? "Could not move this project." : error.getMessage());
+        }
+    }
+
+    public Result restoreRecentProject(@NonNull GhostexMachine machine, @Nullable String password,
+                                       @NonNull String projectId) {
+        try {
+            GhostexSshTransport.CommandResult commandResult = runRemoteGhostexCommand(machine, password,
+                GhostexSshCommandBuilder.restoreRecentProjectRemoteCommand(projectId),
+                "zmx=none op=restoreRecentProject projectId=" + projectId);
+            if (commandResult.timedOut) {
+                return Result.failure(GhostexRemoteTimeoutCopy.sessionAction("restore project"));
+            }
+            if (commandResult.exitCode != 0) {
+                return Result.failure(summarizeFailure(commandResult.output, hasPassword(password)));
+            }
+            return Result.success(new ArrayList<>());
+        } catch (Exception error) {
+            return Result.failure(error.getMessage() == null ? "Could not restore this project." : error.getMessage());
         }
     }
 

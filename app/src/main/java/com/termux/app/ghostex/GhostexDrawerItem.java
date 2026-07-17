@@ -17,6 +17,7 @@ public final class GhostexDrawerItem {
 
     public enum Type {
         STATE_CARD,
+        MACHINE_HEADER,
         PROJECT_HEADER,
         PROJECT_AGENTS_ROW,
         PROJECT_EMPTY,
@@ -40,11 +41,13 @@ public final class GhostexDrawerItem {
     public final int sleepingCount;
     public final boolean collapsed;
     public final boolean sessionListCollapsed;
+    public final boolean isChatCollection;
     public final GhostexRemoteSession session;
     public final String groupTitle;
     public final String groupCollapseKey;
     public final List<GhostexWorkspaceInventory.AgentLauncher> agents;
     public final List<GhostexWorkspaceInventory.QuickAction> quickActions;
+    @NonNull private String machineId = "";
 
     private GhostexDrawerItem(@NonNull Type type, @NonNull String stateTitle,
                               @NonNull String stateBody, @NonNull String stateActionHint,
@@ -71,6 +74,24 @@ public final class GhostexDrawerItem {
                               @NonNull String groupTitle, @NonNull String groupCollapseKey,
                               @NonNull List<GhostexWorkspaceInventory.AgentLauncher> agents,
                               @NonNull List<GhostexWorkspaceInventory.QuickAction> quickActions) {
+        this(type, stateTitle, stateBody, stateActionHint, projectKey, projectId, groupId,
+            projectTitle, projectPath, sessionCount, workingCount, attentionCount, sleepingCount,
+            collapsed, sessionListCollapsed, session, groupTitle, groupCollapseKey, agents,
+            quickActions, false);
+    }
+
+    private GhostexDrawerItem(@NonNull Type type, @NonNull String stateTitle,
+                              @NonNull String stateBody, @NonNull String stateActionHint,
+                              @NonNull String projectKey,
+                              @NonNull String projectId, @NonNull String groupId,
+                              @NonNull String projectTitle, @NonNull String projectPath,
+                              int sessionCount, int workingCount, int attentionCount,
+                              int sleepingCount, boolean collapsed, boolean sessionListCollapsed,
+                              @Nullable GhostexRemoteSession session,
+                              @NonNull String groupTitle, @NonNull String groupCollapseKey,
+                              @NonNull List<GhostexWorkspaceInventory.AgentLauncher> agents,
+                              @NonNull List<GhostexWorkspaceInventory.QuickAction> quickActions,
+                              boolean isChatCollection) {
         this.type = type;
         this.stateTitle = stateTitle;
         this.stateBody = stateBody;
@@ -86,6 +107,7 @@ public final class GhostexDrawerItem {
         this.sleepingCount = sleepingCount;
         this.collapsed = collapsed;
         this.sessionListCollapsed = sessionListCollapsed;
+        this.isChatCollection = isChatCollection;
         this.session = session;
         this.groupTitle = groupTitle;
         this.groupCollapseKey = groupCollapseKey;
@@ -135,10 +157,11 @@ public final class GhostexDrawerItem {
     The mobile summary is now pre-sorted to match the GPUI desktop sidebar and
     carries the full workspace shape. When the payload signals desktop ordering
     (workspaceGroups or per-session sortOrder), Android must preserve the array
-    order instead of re-sorting, render every active project (including empty
-    ones), order project sections by workspaceGroups.projectOrder, and split a
-    project's sessions into the implicit main group followed by the named GPUI
-    groups in their persisted sessionIds order. Named groups collapse per
+    order instead of re-sorting, preserve every active project even when its
+    final session closes, combine chat storage projects into one Chats section,
+    order normal projects by workspaceGroups.projectOrder, and split sessions into the
+    implicit main group followed by the named GPUI groups in their persisted
+    sessionIds order. Explicit recent projects never enter this list. Named groups collapse per
     projectKey+groupId like project disclosure. Old payloads without these
     fields keep the legacy sorting and layout exactly as before.
 
@@ -152,6 +175,36 @@ public final class GhostexDrawerItem {
                                               @NonNull String actionHint) {
         return new GhostexDrawerItem(Type.STATE_CARD, title, body, actionHint,
             "", "", "", "", "", 0, 0, 0, 0, false, false, null);
+    }
+
+    /*
+    CDXC:AndroidSidebar 2026-07-18:
+    The drawer now stacks every saved machine as its own section, mirroring the
+    desktop sidebar's per-remote-machine sections. Machine headers are
+    collapsible disclosure rows above that machine's Quick/project items, and
+    every row carries its owning machine id so attach, create, and context
+    actions target the right Mac even when two machines expose identical
+    session or project ids.
+    */
+    public static GhostexDrawerItem machineHeader(@NonNull String machineId,
+                                                  @NonNull String machineTitle,
+                                                  boolean collapsed) {
+        GhostexDrawerItem item = new GhostexDrawerItem(Type.MACHINE_HEADER, "", "", "",
+            "machine:" + machineId, "", "", machineTitle, "", 0, 0, 0, 0, collapsed, false, null);
+        item.machineId = machineId;
+        return item;
+    }
+
+    @NonNull
+    public String machineId() {
+        return machineId;
+    }
+
+    @NonNull
+    public static List<GhostexDrawerItem> stampMachineId(@NonNull List<GhostexDrawerItem> items,
+                                                         @NonNull String machineId) {
+        for (GhostexDrawerItem item : items) item.machineId = machineId;
+        return items;
     }
 
     public static List<GhostexDrawerItem> buildItems(@NonNull List<GhostexRemoteSession> sessions) {
@@ -176,14 +229,29 @@ public final class GhostexDrawerItem {
                                                      @NonNull Set<String> collapsedProjectSessionListKeys,
                                                      @NonNull Set<String> collapsedGroupKeys) {
         LinkedHashMap<String, ArrayList<GhostexRemoteSession>> sessionsByProjectKey = new LinkedHashMap<>();
+        HashMap<String, GhostexWorkspaceInventory.Project> projectById = new HashMap<>();
+        if (workspace != null) {
+            for (GhostexWorkspaceInventory.Project project : workspace.projects) {
+                projectById.put(project.projectId, project);
+            }
+        }
         for (GhostexRemoteSession session : sessions) {
-            String key = groupKey(session);
+            GhostexWorkspaceInventory.Project project = projectById.get(session.projectId);
+            String key = project != null && project.isChat ? "chats" : groupKey(session);
             ArrayList<GhostexRemoteSession> projectSessions = sessionsByProjectKey.get(key);
             if (projectSessions == null) {
                 projectSessions = new ArrayList<>();
                 sessionsByProjectKey.put(key, projectSessions);
             }
             projectSessions.add(session);
+        }
+        if (workspace != null) {
+            for (GhostexWorkspaceInventory.Project project : workspace.projects) {
+                String key = project.isChat ? "chats" : "id:" + project.projectId;
+                if (!sessionsByProjectKey.containsKey(key)) {
+                    sessionsByProjectKey.put(key, new ArrayList<>());
+                }
+            }
         }
 
         boolean preserveSessionOrder = workspace != null && workspace.preserveSessionOrder;
@@ -193,21 +261,17 @@ public final class GhostexDrawerItem {
             }
         }
 
-        HashMap<String, GhostexWorkspaceInventory.Project> projectsById = new HashMap<>();
-        if (workspace != null) {
-            for (GhostexWorkspaceInventory.Project project : workspace.projects) {
-                projectsById.put(project.projectId, project);
-                String key = "id:" + project.projectId;
-                if (!sessionsByProjectKey.containsKey(key)) {
-                    sessionsByProjectKey.put(key, new ArrayList<>());
-                }
-            }
-        }
-
         ArrayList<String> orderedProjectKeys = new ArrayList<>();
         if (workspace != null) {
+            if (sessionsByProjectKey.containsKey("chats")) orderedProjectKeys.add("chats");
             for (String projectId : workspace.projectOrder) {
                 String key = "id:" + projectId;
+                if (sessionsByProjectKey.containsKey(key) && !orderedProjectKeys.contains(key)) {
+                    orderedProjectKeys.add(key);
+                }
+            }
+            for (GhostexWorkspaceInventory.Project project : workspace.projects) {
+                String key = project.isChat ? "chats" : "id:" + project.projectId;
                 if (sessionsByProjectKey.containsKey(key) && !orderedProjectKeys.contains(key)) {
                     orderedProjectKeys.add(key);
                 }
@@ -221,23 +285,19 @@ public final class GhostexDrawerItem {
         for (String key : orderedProjectKeys) {
             ArrayList<GhostexRemoteSession> projectSessions = sessionsByProjectKey.get(key);
             if (projectSessions == null) continue;
+            boolean isChatCollection = "chats".equals(key);
             GhostexRemoteSession first = projectSessions.isEmpty() ? null : projectSessions.get(0);
-            String projectId;
-            String projectTitle;
-            String projectPath;
-            String legacyGroupId;
-            if (first != null) {
-                projectId = first.projectId;
-                projectTitle = first.displayProjectName();
-                projectPath = first.projectPath;
-                legacyGroupId = first.groupId;
-            } else {
-                projectId = key.startsWith("id:") ? key.substring("id:".length()) : "";
-                GhostexWorkspaceInventory.Project project = projectsById.get(projectId);
-                projectTitle = project == null ? "Project" : project.displayName();
-                projectPath = project == null ? "" : project.path;
-                legacyGroupId = "";
+            GhostexWorkspaceInventory.Project project = null;
+            if (!isChatCollection && workspace != null && key.startsWith("id:")) {
+                project = projectById.get(key.substring(3));
             }
+            String projectId = isChatCollection ? ""
+                : project != null ? project.projectId : first == null ? "" : first.projectId;
+            String projectTitle = isChatCollection ? "Chats"
+                : project != null ? project.displayName() : first == null ? "Project" : first.displayProjectName();
+            String projectPath = isChatCollection ? ""
+                : project != null ? project.path : first == null ? "" : first.projectPath;
+            String legacyGroupId = first == null ? "" : first.groupId;
             int working = 0;
             int attention = 0;
             int sleeping = 0;
@@ -250,7 +310,8 @@ public final class GhostexDrawerItem {
             boolean collapsed = collapsedProjectKeys.contains(key);
             items.add(new GhostexDrawerItem(Type.PROJECT_HEADER, "", "", "", key,
                 projectId, legacyGroupId, projectTitle, projectPath,
-                projectSessions.size(), working, attention, sleeping, collapsed, false, null));
+                projectSessions.size(), working, attention, sleeping, collapsed, false, null,
+                "", "", Collections.emptyList(), Collections.emptyList(), isChatCollection));
             if (collapsed) continue;
 
             List<GhostexWorkspaceInventory.AgentLauncher> agents = workspace == null
@@ -258,7 +319,7 @@ public final class GhostexDrawerItem {
             List<GhostexWorkspaceInventory.QuickAction> quickActions = workspace == null
                 ? Collections.<GhostexWorkspaceInventory.QuickAction>emptyList()
                 : workspace.quickActionsForProject(projectId);
-            if (!projectId.isEmpty() && (!agents.isEmpty() || !quickActions.isEmpty())) {
+            if (!isChatCollection && !projectId.isEmpty() && (!agents.isEmpty() || !quickActions.isEmpty())) {
                 items.add(new GhostexDrawerItem(Type.PROJECT_AGENTS_ROW, "", "", "", key,
                     projectId, legacyGroupId, projectTitle, projectPath,
                     0, 0, 0, 0, false, false, null, "", "", agents, quickActions));
@@ -271,7 +332,7 @@ public final class GhostexDrawerItem {
                 continue;
             }
 
-            List<GhostexWorkspaceInventory.SessionGroup> namedGroups = workspace == null
+            List<GhostexWorkspaceInventory.SessionGroup> namedGroups = workspace == null || isChatCollection
                 ? Collections.<GhostexWorkspaceInventory.SessionGroup>emptyList()
                 : workspace.groupsForProject(projectId);
             if (namedGroups.isEmpty()) {
