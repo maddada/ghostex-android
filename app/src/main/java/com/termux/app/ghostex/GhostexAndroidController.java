@@ -452,6 +452,10 @@ public final class GhostexAndroidController {
     }
 
     public void onDestroy() {
+        onDestroy(false);
+    }
+
+    public void onDestroy(boolean changingConfigurations) {
         /*
         CDXC:AndroidConnectionManagement 2026-05-17-14:52:
         SSH checks and remote actions may post back after Activity teardown.
@@ -480,8 +484,23 @@ public final class GhostexAndroidController {
         }
         mainHandler.removeCallbacksAndMessages(null);
         dismissRemoteSessionCreatingIndicator();
-        executor.shutdownNow();
-        machineInventoryExecutor.shutdownNow();
+        GhostexFileLogger.logAlways(activity, "lifecycle",
+            "controller destroy changingConfigurations=" + changingConfigurations +
+                " reconnectInFlight=" + (lastReconnectAttemptAt > 0));
+        if (changingConfigurations) {
+            /*
+            CDXC:AndroidConnectionRecovery 2026-07-18:
+            Activity recreation is an orderly UI handoff, not cancellation of
+            the transport itself. Let the old controller's bounded SSH call
+            drain after callbacks are detached so SSHJ key exchange is not
+            force-interrupted while the replacement Activity starts.
+            */
+            executor.shutdown();
+            machineInventoryExecutor.shutdown();
+        } else {
+            executor.shutdownNow();
+            machineInventoryExecutor.shutdownNow();
+        }
     }
 
     public void notifyTermuxSessionsUpdated() {

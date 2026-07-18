@@ -1,10 +1,13 @@
 package com.termux.app.ghostex;
 
 import android.annotation.TargetApi;
+import android.app.ActivityManager;
+import android.app.ApplicationExitInfo;
 import android.content.Context;
 import android.content.ContentUris;
 import android.content.ContentResolver;
 import android.content.ContentValues;
+import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
@@ -26,7 +29,9 @@ import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -37,6 +42,8 @@ public final class GhostexFileLogger {
     private static final String LOG_FILE_NAME = "ghostex-android.log";
     private static final String LOG_FILE_PREFIX = "ghostex-android";
     private static final String PREVIOUS_LOG_FILE_NAME = "ghostex-android.previous.log";
+    private static final String DIAGNOSTIC_PREFS_NAME = "ghostex_android_crash_diagnostics";
+    private static final String KEY_LAST_RECORDED_EXIT_TIMESTAMP = "last_recorded_exit_timestamp";
     private static final Object LOCK = new Object();
     private static final Pattern SENSITIVE_KEY_PATTERN = Pattern.compile(
         "(?i)\\b(machine|target|command|commandLabel|name|sessionName|alias|title|path|file|url|host|username|user|zmx|stdout|stderr|output|token|cookie|secret|password|authorization)=");
@@ -61,6 +68,78 @@ public final class GhostexFileLogger {
         if (existing instanceof ShareableCrashHandler) return;
         Thread.setDefaultUncaughtExceptionHandler(
             new ShareableCrashHandler(context.getApplicationContext(), existing));
+    }
+
+    public static void logAlways(@NonNull Context context,
+                                 @NonNull String area,
+                                 @NonNull String message) {
+        write(context, area, null, message, null, true);
+    }
+
+    /*
+    CDXC:AndroidCrashDiagnostics 2026-07-18:
+    Java's uncaught-exception hook cannot observe native aborts, ANRs, low-memory
+    kills, package updates, or explicit process exits. Android 11+ retains
+    those reasons across launches. Persist every unseen record so the next APK
+    can diagnose the previous build even when installation itself becomes the
+    newest exit record.
+    */
+    public static void logPreviousProcessExits(@NonNull Context context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return;
+        Context appContext = context.getApplicationContext();
+        try {
+            ActivityManager activityManager =
+                (ActivityManager) appContext.getSystemService(Context.ACTIVITY_SERVICE);
+            if (activityManager == null) return;
+            SharedPreferences preferences = appContext.getSharedPreferences(
+                DIAGNOSTIC_PREFS_NAME, Context.MODE_PRIVATE);
+            long lastRecorded = preferences.getLong(KEY_LAST_RECORDED_EXIT_TIMESTAMP, 0L);
+            List<ApplicationExitInfo> exits = new ArrayList<>(
+                activityManager.getHistoricalProcessExitReasons(appContext.getPackageName(), 0, 16));
+            exits.sort(Comparator.comparingLong(ApplicationExitInfo::getTimestamp));
+            long newestRecorded = lastRecorded;
+            for (ApplicationExitInfo exit : exits) {
+                if (exit.getTimestamp() <= lastRecorded) continue;
+                logAlways(appContext, "process-exit",
+                    "previous process exit timestamp=" + exit.getTimestamp() +
+                        " reason=" + exitReasonName(exit.getReason()) +
+                        " status=" + exit.getStatus() +
+                        " importance=" + exit.getImportance() +
+                        " pssKb=" + exit.getPss() +
+                        " rssKb=" + exit.getRss() +
+                        " description=" + String.valueOf(exit.getDescription()));
+                newestRecorded = Math.max(newestRecorded, exit.getTimestamp());
+            }
+            if (newestRecorded > lastRecorded) {
+                preferences.edit().putLong(KEY_LAST_RECORDED_EXIT_TIMESTAMP, newestRecorded).apply();
+            }
+        } catch (Exception error) {
+            log(appContext, "process-exit", "Failed to read Android process exit history", error);
+        }
+    }
+
+    @NonNull
+    private static String exitReasonName(int reason) {
+        switch (reason) {
+            case ApplicationExitInfo.REASON_ANR: return "ANR";
+            case ApplicationExitInfo.REASON_CRASH: return "CRASH";
+            case ApplicationExitInfo.REASON_CRASH_NATIVE: return "CRASH_NATIVE";
+            case ApplicationExitInfo.REASON_DEPENDENCY_DIED: return "DEPENDENCY_DIED";
+            case ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE: return "EXCESSIVE_RESOURCE_USAGE";
+            case ApplicationExitInfo.REASON_EXIT_SELF: return "EXIT_SELF";
+            case ApplicationExitInfo.REASON_FREEZER: return "FREEZER";
+            case ApplicationExitInfo.REASON_INITIALIZATION_FAILURE: return "INITIALIZATION_FAILURE";
+            case ApplicationExitInfo.REASON_LOW_MEMORY: return "LOW_MEMORY";
+            case ApplicationExitInfo.REASON_OTHER: return "OTHER";
+            case ApplicationExitInfo.REASON_PACKAGE_STATE_CHANGE: return "PACKAGE_STATE_CHANGE";
+            case ApplicationExitInfo.REASON_PACKAGE_UPDATED: return "PACKAGE_UPDATED";
+            case ApplicationExitInfo.REASON_PERMISSION_CHANGE: return "PERMISSION_CHANGE";
+            case ApplicationExitInfo.REASON_SIGNALED: return "SIGNALED";
+            case ApplicationExitInfo.REASON_UNKNOWN: return "UNKNOWN";
+            case ApplicationExitInfo.REASON_USER_REQUESTED: return "USER_REQUESTED";
+            case ApplicationExitInfo.REASON_USER_STOPPED: return "USER_STOPPED";
+            default: return "UNKNOWN_" + reason;
+        }
     }
 
     private static final class ShareableCrashHandler implements Thread.UncaughtExceptionHandler {
@@ -149,7 +228,16 @@ public final class GhostexFileLogger {
                            @Nullable String sessionTag,
                            @NonNull String message,
                            @Nullable Throwable throwable) {
-        if (!shouldWritePersistentLog(message, throwable)) return;
+        write(context, area, sessionTag, message, throwable, false);
+    }
+
+    private static void write(@NonNull Context context,
+                              @NonNull String area,
+                              @Nullable String sessionTag,
+                              @NonNull String message,
+                              @Nullable Throwable throwable,
+                              boolean force) {
+        if (!force && !shouldWritePersistentLog(message, throwable)) return;
         String cleanSessionTag = sessionTag == null || sessionTag.trim().isEmpty() ? "zmx=none" : sessionTag.trim();
         String line = timestamp() + " [" + sanitizeForPersistentLog(area) + "] [" +
             sanitizeForPersistentLog(cleanSessionTag) + "] " + sanitizeForPersistentLog(message);

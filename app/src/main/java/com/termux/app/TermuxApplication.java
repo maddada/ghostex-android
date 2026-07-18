@@ -30,6 +30,7 @@ public class TermuxApplication extends Application {
         // Set crash handler for the app
         TermuxCrashUtils.setDefaultCrashHandler(this);
         GhostexFileLogger.installCrashHandler(this);
+        GhostexFileLogger.logPreviousProcessExits(context);
 
         // Set log config for the app
         setLogConfig(context);

@@ -32,6 +32,7 @@ import android.widget.Toast;
 import com.termux.R;
 import com.termux.app.api.file.FileReceiverActivity;
 import com.termux.app.ghostex.GhostexAndroidController;
+import com.termux.app.ghostex.GhostexFileLogger;
 import com.termux.app.terminal.TermuxActivityRootView;
 import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
 import com.termux.app.terminal.io.TermuxTerminalExtraKeys;
@@ -243,6 +244,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         super.onCreate(savedInstanceState);
 
+        GhostexFileLogger.logAlways(this, "lifecycle",
+            "activity onCreate recreated=" + mIsActivityRecreated);
+
         setContentView(R.layout.activity_termux);
 
         // Load termux shared preferences
@@ -325,6 +329,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     public void onStart() {
         super.onStart();
 
+        GhostexFileLogger.logAlways(this, "lifecycle", "activity onStart");
+
         Logger.logDebug(LOG_TAG, "onStart");
 
         if (mIsInvalidState) return;
@@ -348,6 +354,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     @Override
     public void onResume() {
         super.onResume();
+
+        GhostexFileLogger.logAlways(this, "lifecycle", "activity onResume");
 
         Logger.logVerbose(LOG_TAG, "onResume");
 
@@ -379,6 +387,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     protected void onStop() {
         super.onStop();
 
+        GhostexFileLogger.logAlways(this, "lifecycle",
+            "activity onStop finishing=" + isFinishing() +
+                " changingConfigurations=" + isChangingConfigurations());
+
         Logger.logDebug(LOG_TAG, "onStop");
 
         if (mIsInvalidState) return;
@@ -399,6 +411,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     @Override
     public void onDestroy() {
+        boolean changingConfigurations = isChangingConfigurations();
+        GhostexFileLogger.logAlways(this, "lifecycle",
+            "activity onDestroy finishing=" + isFinishing() +
+                " changingConfigurations=" + changingConfigurations);
         super.onDestroy();
 
         Logger.logDebug(LOG_TAG, "onDestroy");
@@ -412,7 +428,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         }
 
         if (mGhostexAndroidController != null) {
-            mGhostexAndroidController.onDestroy();
+            mGhostexAndroidController.onDestroy(changingConfigurations);
             mGhostexAndroidController = null;
         }
 
@@ -542,6 +558,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     @Override
     public void onServiceDisconnected(ComponentName name) {
         Logger.logDebug(LOG_TAG, "onServiceDisconnected");
+        GhostexFileLogger.logAlways(this, "lifecycle", "Termux service disconnected; finishing activity");
 
         // Respect being stopped from the {@link TermuxService} notification action.
         finishActivityIfNotFinishing();
@@ -879,6 +896,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     public void finishActivityIfNotFinishing() {
         // prevent duplicate calls to finish() if called from multiple places
         if (!TermuxActivity.this.isFinishing()) {
+            GhostexFileLogger.logAlways(this, "lifecycle", "explicit activity finish requested");
             finish();
         }
     }
