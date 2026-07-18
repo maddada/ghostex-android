@@ -49,6 +49,43 @@ public final class GhostexFileLogger {
     private GhostexFileLogger() {}
 
     /*
+    CDXC:AndroidCrashDiagnostics 2026-07-18:
+    Termux's default crash handler keeps its report inside the app sandbox,
+    which is not useful when Ghostex crashes during automatic reconnect before
+    the user can reach the report UI. Wrap that handler once at application
+    startup and append the same uncaught exception to the existing sanitized,
+    shareable Downloads log before delegating to Termux's normal crash flow.
+    */
+    public static void installCrashHandler(@NonNull Context context) {
+        Thread.UncaughtExceptionHandler existing = Thread.getDefaultUncaughtExceptionHandler();
+        if (existing instanceof ShareableCrashHandler) return;
+        Thread.setDefaultUncaughtExceptionHandler(
+            new ShareableCrashHandler(context.getApplicationContext(), existing));
+    }
+
+    private static final class ShareableCrashHandler implements Thread.UncaughtExceptionHandler {
+        @NonNull private final Context context;
+        @Nullable private final Thread.UncaughtExceptionHandler delegate;
+
+        private ShareableCrashHandler(@NonNull Context context,
+                                      @Nullable Thread.UncaughtExceptionHandler delegate) {
+            this.context = context;
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void uncaughtException(@NonNull Thread thread, @NonNull Throwable throwable) {
+            try {
+                GhostexFileLogger.log(context, "crash",
+                    "Uncaught exception on " + thread.getName(), throwable);
+            } catch (Throwable ignored) {
+                // Crash diagnostics must never replace the original exception.
+            }
+            if (delegate != null) delegate.uncaughtException(thread, throwable);
+        }
+    }
+
+    /*
     CDXC:AndroidRemoteAttach 2026-05-18-04:38:
     SSHJ-backed attach failures can close the terminal with only
     `[Process completed (code 1)]` visible. Persist a small app-owned diagnostic

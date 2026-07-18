@@ -1422,11 +1422,15 @@ public final class GhostexAndroidController {
         combined by the drawer projection, while parked recent projects stay
         behind the dedicated restore modal.
         */
-        machineInventories.put(machine.id,
-            GhostexMachineInventorySnapshot.success(machine, sessions, workspace));
-        refreshOtherMachineInventories(machine.id);
-        if (machineStore.getMachines().size() < 2 &&
-            sessions.isEmpty() && (workspace == null || workspace.projects.isEmpty())) {
+        /*
+        CDXC:AndroidConnectionRecovery 2026-07-18:
+        Keep reconnect scoped to the selected machine. The July 18 stacked
+        multi-machine drawer made one successful reconnect start more SSH
+        fetches and mutate the same adapter projection; that widened a simple
+        Add-machine/startup path into the crash reported by release users.
+        Saved machines remain available and switchable on the Machines page.
+        */
+        if (sessions.isEmpty() && (workspace == null || workspace.projects.isEmpty())) {
             setDrawerState("No ZMX sessions yet",
                 "The machine is reachable, but the Ghostex CLI did not return any ZMX-backed sessions.",
                 "Start or resume sessions in Ghostex on the remote machine, then tap Retry.");
@@ -1998,75 +2002,15 @@ public final class GhostexAndroidController {
         }
     }
 
-    /*
-    CDXC:AndroidSidebar 2026-07-18:
-    All saved machines render as stacked sections at once, mirroring the
-    desktop's per-remote-machine sidebar sections. With a single saved machine
-    the drawer keeps its original headerless layout; with two or more, each
-    machine gets a collapsible header followed by that machine's Quick,
-    projects, and sessions. Non-selected machines render from their cached
-    concurrent fetch, with a per-section state card while loading or after a
-    fetch failure.
-    */
     private void rebuildDrawerItems() {
         drawerItems.clear();
-        List<GhostexMachine> machines = machineStore.getMachines();
         String selectedMachineId = machineStore.getLastMachineId();
-        if (machines.size() < 2) {
-            drawerItems.addAll(GhostexDrawerItem.stampMachineId(
-                GhostexDrawerItem.buildItems(remoteSessions, workspaceInventory,
-                    collapsedProjectKeys, collapsedProjectSessionListKeys,
-                    collapsedGroupKeysForMachine(selectedMachineId == null ? "" : selectedMachineId)),
-                selectedMachineId == null ? "" : selectedMachineId));
-            pruneCollapsedProjectKeys();
-            return;
-        }
-        for (GhostexMachine machine : machines) {
-            boolean machineCollapsed = collapsedMachineIds.contains(machine.id);
-            drawerItems.add(GhostexDrawerItem.machineHeader(machine.id, machine.displayLabel(),
-                machineCollapsed));
-            if (machineCollapsed) continue;
-            boolean isSelected = machine.id.equals(selectedMachineId);
-            List<GhostexRemoteSession> machineSessions;
-            GhostexWorkspaceInventory machineWorkspace;
-            if (isSelected) {
-                machineSessions = remoteSessions;
-                machineWorkspace = workspaceInventory;
-            } else {
-                GhostexMachineInventorySnapshot snapshot = machineInventories.get(machine.id);
-                if (snapshot == null) {
-                    drawerItems.add(stampedMachineStateCard(machine.id, "Loading sessions",
-                        "Fetching this machine's Ghostex sessions over SSH.", ""));
-                    continue;
-                }
-                if (!snapshot.isSuccess()) {
-                    drawerItems.add(stampedMachineStateCard(machine.id, "Connection needs attention",
-                        snapshot.errorMessage == null ? "Could not load sessions from this machine."
-                            : snapshot.errorMessage,
-                        "Tap for recovery actions."));
-                    continue;
-                }
-                machineSessions = snapshot.sessions;
-                machineWorkspace = snapshot.workspace;
-            }
-            Set<String> projectKeys = isSelected
-                ? collapsedProjectKeys : machineStore.getCollapsedProjectKeys(machine.id);
-            Set<String> sessionListKeys = isSelected
-                ? collapsedProjectSessionListKeys
-                : machineStore.getCollapsedProjectSessionListKeys(machine.id);
-            Set<String> groupKeys = collapsedGroupKeysForMachine(machine.id);
-            List<GhostexDrawerItem> machineItems = GhostexDrawerItem.stampMachineId(
-                GhostexDrawerItem.buildItems(machineSessions, machineWorkspace,
-                    projectKeys, sessionListKeys, groupKeys),
-                machine.id);
-            if (machineItems.isEmpty()) {
-                drawerItems.add(stampedMachineStateCard(machine.id, "No ZMX sessions yet",
-                    "This machine is reachable, but the Ghostex CLI did not return any ZMX-backed sessions.",
-                    ""));
-                continue;
-            }
-            drawerItems.addAll(machineItems);
-        }
+        String machineId = selectedMachineId == null ? "" : selectedMachineId;
+        drawerItems.addAll(GhostexDrawerItem.stampMachineId(
+            GhostexDrawerItem.buildItems(remoteSessions, workspaceInventory,
+                collapsedProjectKeys, collapsedProjectSessionListKeys,
+                collapsedGroupKeysForMachine(machineId)),
+            machineId));
         pruneCollapsedProjectKeys();
     }
 
@@ -3756,6 +3700,15 @@ public final class GhostexAndroidController {
             }
         }
         machineStore.saveMachine(machine);
+        if (shouldSelectAfterSave) {
+            /*
+            CDXC:AndroidConnectionRecovery 2026-07-18:
+            Machine-scoped controls and drawer state must observe the new
+            selection on their first rebuild. v149 refreshed them while the
+            persisted selection was still empty or pointed at the old target.
+            */
+            machineStore.setLastMachineId(machine.id);
+        }
         if (GhostexOnboardingCompletionPolicy.shouldMarkTutorialSeenAfterMachineSave(
             machineStore.hasSeenTutorial(), !machineStore.getMachines().isEmpty())) {
             /*
@@ -3768,7 +3721,6 @@ public final class GhostexAndroidController {
         }
         refreshMachineControls();
         if (shouldSelectAfterSave) {
-            machineStore.setLastMachineId(machine.id);
             reconnectLastMachine(false);
         } else {
             setStatus("Saved " + machine.displayLabel() + ". Use Connect when you want to switch to it.");

@@ -4,6 +4,7 @@ import android.app.Application;
 import android.content.Context;
 
 import com.termux.BuildConfig;
+import com.termux.app.ghostex.GhostexFileLogger;
 import com.termux.shared.errors.Error;
 import com.termux.shared.logger.Logger;
 import com.termux.shared.termux.TermuxBootstrap;
@@ -28,6 +29,7 @@ public class TermuxApplication extends Application {
 
         // Set crash handler for the app
         TermuxCrashUtils.setDefaultCrashHandler(this);
+        GhostexFileLogger.installCrashHandler(this);
 
         // Set log config for the app
         setLogConfig(context);
