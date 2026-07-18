@@ -717,7 +717,7 @@ public final class GhostexAndroidController {
         The sidebar's icon-only exit button is the explicit app-exit path.
         */
         View exitButton = activity.findViewById(R.id.ghostex_exit_app_button);
-        if (exitButton != null) exitButton.setOnClickListener(v -> activity.finishActivityIfNotFinishing());
+        if (exitButton != null) exitButton.setOnClickListener(v -> activity.exitGhostexApp());
 
         View backToSessionsButton = activity.findViewById(R.id.ghostex_back_to_sessions_button);
         if (backToSessionsButton != null) backToSessionsButton.setOnClickListener(v -> showSessionsPage());

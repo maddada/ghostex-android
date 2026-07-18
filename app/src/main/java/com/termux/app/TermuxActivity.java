@@ -44,6 +44,7 @@ import com.termux.shared.android.PermissionUtils;
 import com.termux.shared.data.DataUtils;
 import com.termux.shared.termux.TermuxConstants;
 import com.termux.shared.termux.TermuxConstants.TERMUX_APP.TERMUX_ACTIVITY;
+import com.termux.shared.termux.TermuxConstants.TERMUX_APP.TERMUX_SERVICE;
 import com.termux.app.activities.HelpActivity;
 import com.termux.app.activities.SettingsActivity;
 import com.termux.shared.termux.crash.TermuxCrashUtils;
@@ -558,10 +559,15 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     @Override
     public void onServiceDisconnected(ComponentName name) {
         Logger.logDebug(LOG_TAG, "onServiceDisconnected");
-        GhostexFileLogger.logAlways(this, "lifecycle", "Termux service disconnected; finishing activity");
-
-        // Respect being stopped from the {@link TermuxService} notification action.
-        finishActivityIfNotFinishing();
+        mTermuxService = null;
+        /*
+        CDXC:AndroidServiceLifetime 2026-07-18-04:18:
+        A service disconnect is not an app-exit request. In particular, remote
+        SSH reconnects can temporarily have no local or remote session rows.
+        Keep the Activity alive; an explicit drawer Exit stops the service and
+        finishes the Activity through exitGhostexApp().
+        */
+        GhostexFileLogger.logAlways(this, "lifecycle", "Termux service disconnected; keeping activity alive");
     }
 
 
@@ -899,6 +905,14 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             GhostexFileLogger.logAlways(this, "lifecycle", "explicit activity finish requested");
             finish();
         }
+    }
+
+    public void exitGhostexApp() {
+        GhostexFileLogger.logAlways(this, "lifecycle", "explicit app exit requested");
+        Intent stopServiceIntent = new Intent(this, TermuxService.class)
+            .setAction(TERMUX_SERVICE.ACTION_STOP_SERVICE);
+        startService(stopServiceIntent);
+        finishActivityIfNotFinishing();
     }
 
     /** Show a toast and dismiss the last one if still visible. */

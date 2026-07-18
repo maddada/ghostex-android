@@ -1294,8 +1294,9 @@ task verifyGhostexReleaseDrawerSurface() {
         def controllerFile = new File(projectDir, "src/main/java/com/termux/app/ghostex/GhostexAndroidController.java")
         def controllerText = controllerFile.getText("UTF-8")
         if (!controllerText.contains("R.id.ghostex_exit_app_button") ||
-            !controllerText.contains("activity.finishActivityIfNotFinishing()")) {
-            violations.add(controllerFile.name + ": explicit drawer exit button must be wired to app exit")
+            !controllerText.contains("activity.exitGhostexApp()") ||
+            !activityText.contains(".setAction(TERMUX_SERVICE.ACTION_STOP_SERVICE)")) {
+            violations.add(controllerFile.name + ": explicit drawer exit button must stop the service and exit the app")
         }
         if (!controllerText.contains("R.id.ghostex_refresh_sessions_button") ||
             !controllerText.contains("refreshSessionsButton.setOnClickListener(v -> reconnectLastMachine(false))")) {

@@ -1088,18 +1088,15 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     /** Update the shown foreground service notification after making any changes that affect it. */
     private synchronized void updateNotification() {
         /*
-        CDXC:AndroidNotifications 2026-05-21-23:29:
-        Remote session inventory can be the foreground notification's primary
-        content even when no local Termux shell is attached yet. Keep the
-        service notification alive while those row targets exist.
+        CDXC:AndroidServiceLifetime 2026-07-18-04:18:
+        Ghostex intentionally has no local Termux sessions while it connects to
+        the selected remote machine. An empty remote inventory is also a valid
+        reconnect/loading/error state, not a request to exit. Keep the
+        foreground service and its generic notification alive until the user
+        explicitly chooses Exit.
         */
-        if (mWakeLock == null && mShellManager.mTermuxSessions.isEmpty() && mShellManager.mTermuxTasks.isEmpty()
-            && GhostexServiceNotificationState.sessions().isEmpty()) {
-            // Exit if we are updating after the user disabled all locks with no sessions or tasks running.
-            requestStopService();
-        } else {
-            ((NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE)).notify(TermuxConstants.TERMUX_APP_NOTIFICATION_ID, buildNotification());
-        }
+        ((NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE))
+            .notify(TermuxConstants.TERMUX_APP_NOTIFICATION_ID, buildNotification());
     }
 
     public synchronized void refreshNotification() {
